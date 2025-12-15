@@ -1,15 +1,17 @@
 #define BAUDRATE 115200
-#define TIMEOUT_SEGURIDAD 25000
+#define TIMEOUT_SEGURIDAD 45000
+#define MINIMO 30
 
 #define DEBUG TRUE
 
 // Pines L298N
 const int R_IN1 = 2;
 const int R_IN2 = 3;
-const int R_ENA = 5;
 
 const int L_IN3 = 4;
 const int L_IN4 = 7;
+
+const int R_ENA = 5;
 const int L_ENB = 6;
 
 // Pines receptor RC
@@ -56,12 +58,12 @@ void updateRCInputs(int &throttle_pwm, int &steering_pwm) {
   throttle_pwm = pulseIn(PIN_THROTTLE, HIGH, TIMEOUT_SEGURIDAD);
   steering_pwm = pulseIn(PIN_STEERING, HIGH, TIMEOUT_SEGURIDAD);
 
-#ifdef DEBUG
+#ifdef DEGUG
   Serial.print("PWM Throttle(us): ");
   Serial.print(throttle_pwm);
   Serial.print("   |   PWM Steering(us): ");
   Serial.println(steering_pwm);
-  #endif
+#endif
 }
 
 void controlFunction(int throttle_pwm, int steering_pwm){
@@ -84,13 +86,13 @@ void controlFunction(int throttle_pwm, int steering_pwm){
   steering = constrain(steering, -255, 255);
 
   // Mezcla diferencial
-  int VR = throttle + steering;
-  int VL = throttle - steering;
+  int VR = throttle - steering;
+  int VL = throttle + steering;
 
-  // Solo marcha adelante
-  VR = constrain(VR, 0, 255);
-  VL = constrain(VL, 0, 255);
-#ifdef DEBUG
+  
+  VR = constrain(VR, -255, 255);
+  VL = constrain(VL, -255, 255);
+#ifdef FALSE
   Serial.print("Velocidad Derecha (0-255): ");
   Serial.print(VR);
   Serial.print(" | Velocidad Izquierda (0-255): ");
@@ -103,30 +105,47 @@ void controlFunction(int throttle_pwm, int steering_pwm){
 
 void L298_Driver(int VR, int VL){
 
+#ifdef FALSE
+  Serial.print("VR: ");
+  Serial.println(VR);
+  Serial.print("   |   VL: ");
+  Serial.println(VL);
+#endif
   // --- Motor derecho ---
-  if (VR >= 0) {
+  if (VR > MINIMO) {
     // Adelante
     digitalWrite(R_IN1, HIGH);
     digitalWrite(R_IN2, LOW);
     analogWrite(R_ENA, VR);
-  } else {
+  }
+  else if (VR < -MINIMO) {
     // Atrás
     digitalWrite(R_IN1, LOW);
     digitalWrite(R_IN2, HIGH);
     analogWrite(R_ENA, -VR);   // PWM positivo
   }
+  else {
+    // Atrás
+    digitalWrite(R_IN1, LOW);
+    digitalWrite(R_IN2, LOW);
+  }
 
   // --- Motor izquierdo ---
-  if (VL >= 0) {
+  if (VL > MINIMO) {
     // Adelante
     digitalWrite(L_IN3, HIGH);
     digitalWrite(L_IN4, LOW);
     analogWrite(L_ENB, VL);
-  } else {
+  } 
+  else if (VL < -MINIMO) {
     // Atrás
     digitalWrite(L_IN3, LOW);
     digitalWrite(L_IN4, HIGH);
     analogWrite(L_ENB, -VL);   // PWM positivo
+  }
+  else {
+    digitalWrite(L_IN3, LOW);
+    digitalWrite(L_IN4, LOW);
   }
 
 }
