@@ -82,8 +82,8 @@ void controlFunction(int throttle_pwm, int steering_pwm){
   int throttle = map(throttle_pwm, 1000, 2000, 0, 255);
   throttle = constrain(throttle, 0, 255);
 
-  int steering = map(steering_pwm, 1000, 2000, -255, 255);
-  steering = constrain(steering, -255, 255);
+  int steering = map(steering_pwm, 1000, 2000, -350, 350);
+  steering = constrain(steering, -350, 350);
 
   // Mezcla diferencial
   int VR = throttle - steering;
