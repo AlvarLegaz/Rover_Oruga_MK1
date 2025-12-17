@@ -60,14 +60,15 @@ class Visor:
             img_data = response.content
             img = Image.open(BytesIO(img_data))
 
-            # Redimensionar a tamaño fijo (puede distorsionar si no mantiene proporción)
             img = img.resize((FIXED_IMAGE_WIDTH, FIXED_IMAGE_HEIGHT))
 
             imgtk = ImageTk.PhotoImage(image=img)
             self.image_label.imgtk = imgtk
-            self.image_label.configure(image=imgtk)
+            self.image_label.configure(image=imgtk, text="")
+
         except requests.RequestException:
-            self.image_label.configure(text="No se pudo conectar", image="")
+            # No tocar la imagen previa
+            self.image_label.configure(text="Sin señal")
 
         # Mostrar telemetría al lateral
         try:
