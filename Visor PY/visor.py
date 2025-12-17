@@ -7,20 +7,20 @@ from io import BytesIO
 FIXED_IMAGE_WIDTH = 640
 FIXED_IMAGE_HEIGHT = 480
 
-class CameraViewer:
+class Visor:
     def __init__(self, root):
         self.root = root
-        self.root.title("ESP32-CAM Viewer")
+        self.root.title("Visor Rover-Oruga")
 
         # Frame superior para la IP y botón
         top_frame = Frame(root)
         top_frame.pack(pady=5)
 
-        self.ip_label = Label(top_frame, text="IP del ESP32-CAM:")
+        self.ip_label = Label(top_frame, text="IP Modulo Telemetría:")
         self.ip_label.pack(side="left")
         self.ip_entry = Entry(top_frame, width=20)
         self.ip_entry.pack(side="left", padx=5)
-        self.ip_entry.insert(0, "192.168.1.70")  # ejemplo
+        self.ip_entry.insert(0, "192.168.4.1")  # ejemplo
 
         self.start_button = Button(top_frame, text="Iniciar", command=self.start_stream)
         self.start_button.pack(side="left", padx=5)
@@ -101,6 +101,6 @@ class CameraViewer:
 
 if __name__ == "__main__":
     root = tk.Tk()
-    viewer = CameraViewer(root)
+    viewer = Visor(root)
     root.protocol("WM_DELETE_WINDOW", viewer.on_close)
     root.mainloop()
