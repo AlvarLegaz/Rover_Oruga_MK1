@@ -4,6 +4,9 @@ from PIL import Image, ImageTk
 import requests
 from io import BytesIO
 
+FIXED_IMAGE_WIDTH = 640
+FIXED_IMAGE_HEIGHT = 480
+
 class CameraViewer:
     def __init__(self, root):
         self.root = root
@@ -56,6 +59,10 @@ class CameraViewer:
             response.raise_for_status()
             img_data = response.content
             img = Image.open(BytesIO(img_data))
+
+            # Redimensionar a tamaño fijo (puede distorsionar si no mantiene proporción)
+            img = img.resize((FIXED_IMAGE_WIDTH, FIXED_IMAGE_HEIGHT))
+
             imgtk = ImageTk.PhotoImage(image=img)
             self.image_label.imgtk = imgtk
             self.image_label.configure(image=imgtk)
