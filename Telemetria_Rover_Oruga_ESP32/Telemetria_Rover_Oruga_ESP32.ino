@@ -1,47 +1,49 @@
 #include <WiFi.h>
-#include <WebServer.h>
+#include <AsyncTCP.h>
+#include <ESPAsyncWebServer.h>
 #include "camera_driver_OV2640.h"
 
-// ================== CONFIGURACIÓN ==================
+// ================== CONFIGURACIÓN WIFI ==================
 const char *ssid = "MOVISTAR-WIFI6-48A8";
-const char *password= "aMYFm4cR4f3c79T4Xc3X";
+const char *password = "aMYFm4cR4f3c79T4Xc3X";
 
-// Para modo AP
+// Modo AP
 const char *ap_ssid = "ROVER-ORUGA-TEL";
 const char *ap_password = "12345678";
 
-// Cambia este valor para seleccionar el modo:
 // true  -> AP
 // false -> STA
 bool useAPmode = false;
 
-void handleHealth();
-void handleCapture();
-void handleTelemetry();
+// ================== SERVIDOR ==================
+AsyncWebServer server(80);
 
-WebServer server(80);
-
+// ================== ESTADO ==================
 bool cameraSupported = false;
 
+// ================== PROTOTIPOS ==================
+void handleHealth(AsyncWebServerRequest *request);
+void handleCapture(AsyncWebServerRequest *request);
+void handleStreamPage(AsyncWebServerRequest *request);
+void handleTelemetry(AsyncWebServerRequest *request);
+
+// ================== SETUP ==================
 void setup() {
   Serial.begin(115200);
 
+  // ---- CÁMARA ----
   cameraSupported = initCamera();
-
   if (!cameraSupported) {
-    Serial.println("Cámara no soportada o fallo al iniciar");
+    Serial.println("Error: cámara no soportada o fallo al iniciar");
   }
 
-   // ================== MODO WIFI ==================
-  
- if (useAPmode) {
-    // Modo Access Point
+  // ---- WIFI ----
+  if (useAPmode) {
     WiFi.softAP(ap_ssid, ap_password);
     Serial.println("Modo AP iniciado");
-    Serial.print("IP del AP: ");
+    Serial.print("IP AP: ");
     Serial.println(WiFi.softAPIP());
   } else {
-    // Modo Estación
     WiFi.begin(ssid, password);
     Serial.print("Conectando a WiFi");
     while (WiFi.status() != WL_CONNECTED) {
@@ -49,39 +51,41 @@ void setup() {
       Serial.print(".");
     }
     Serial.println("\nWiFi conectado");
+    Serial.print("IP: ");
     Serial.println(WiFi.localIP());
   }
 
-  // Endpoint
-  server.on("/health", handleHealth);
-  server.on("/capture", handleCapture);
-  server.on("/stream", handleStreamPage);
-  server.on("/telemetry", handleTelemetry);
+  // ---- ENDPOINTS ----
+  server.on("/health", HTTP_GET, handleHealth);
+  server.on("/capture", HTTP_GET, handleCapture);
+  server.on("/stream", HTTP_GET, handleStreamPage);
+  server.on("/telemetry", HTTP_GET, handleTelemetry);
 
   server.begin();
-  Serial.println("Servidor HTTP listo");
+  Serial.println("Servidor ESPAsyncWebServer iniciado");
 }
 
+// ================== LOOP ==================
 void loop() {
-  server.handleClient();
-
+  // No se usa en servidor asíncrono
 }
 
-void handleHealth() {
+// ================== HANDLERS ==================
+
+void handleHealth(AsyncWebServerRequest *request) {
   String json = "{";
   json += "\"status\":\"ok\",";
   json += "\"camera\":";
   json += cameraSupported ? "\"initialized\"" : "\"not_initialized\"";
   json += "}";
 
-  server.send(200, "application/json", json);
+  request->send(200, "application/json", json);
 }
 
-// Manejador del endpoint /capture
-void handleCapture() {
+void handleCapture(AsyncWebServerRequest *request) {
 
   if (!cameraSupported) {
-    server.send(500, "text/plain", "Error de camara");
+    request->send(500, "text/plain", "Error de camara");
     return;
   }
 
@@ -89,60 +93,64 @@ void handleCapture() {
   size_t img_len = 0;
   uint16_t width = 0, height = 0;
 
-  if (getImage(&img_buf, &img_len, &width, &height) == ESP_OK) {
-    server.setContentLength(img_len);
-    server.send(200, "image/jpeg", "");  // Inicia la respuesta sin cuerpo
-    server.sendContent((const char*)img_buf, img_len);
-    free(img_buf);
-  } else {
-    if(img_buf) free(img_buf);  // liberar si algo se asignó
-    server.send(500, "text/plain", "Error al capturar imagen");
+  if (getImage(&img_buf, &img_len, &width, &height) != ESP_OK || !img_buf) {
+    request->send(500, "text/plain", "Error al capturar imagen");
+    return;
   }
+
+  AsyncWebServerResponse *response =
+      request->beginResponse_P(200, "image/jpeg", img_buf, img_len);
+
+  response->addHeader("Cache-Control", "no-store");
+  response->addHeader("Pragma", "no-cache");
+  response->addHeader("Connection", "close");
+
+  request->send(response);
+
+  free(img_buf);
 }
 
-void handleStreamPage() {
-  // HTML muy simple con refresco cada 200ms
-  String html = "<!DOCTYPE html><html><head><title>ESP32-CAM Stream</title>";
-  html += "<meta http-equiv='refresh' content='1'>"; // 0.2 segundos
-  html += "</head><body>";
-  html += "<h2>ESP32-CAM</h2>";
-  html += "<img src='/capture' style='width:640px;height:480px;' />";
-  html += "</body></html>";
+void handleStreamPage(AsyncWebServerRequest *request) {
 
-  server.send(200, "text/html", html);
+  String html =
+      "<!DOCTYPE html>"
+      "<html><head><title>ESP32-CAM Stream</title>"
+      "<meta http-equiv='refresh' content='1'>"
+      "</head><body>"
+      "<h2>ESP32-CAM</h2>"
+      "<img src='/capture' width='640' height='480' />"
+      "</body></html>";
+
+  request->send(200, "text/html", html);
 }
 
-void handleTelemetry() {
-  // ---- Lecturas de sensores (ejemplo) ----
-  float temperatura = 24.6;   // °C
-  float humedad = 58.2;       // %
+void handleTelemetry(AsyncWebServerRequest *request) {
 
-  // GPS
+  // ---- Datos simulados ----
+  float temperatura = 24.6;
+  float humedad = 58.2;
+
   float latitud = -34.6037;
   float longitud = -58.3816;
-  float altitud = 25.4;       // metros
+  float altitud = 25.4;
 
-  // Orientación (IMU / brújula)
-  float roll = 1.2;   // grados
+  float roll = 1.2;
   float pitch = -0.8;
   float yaw = 182.5;
 
-  // ---- Construcción del JSON ----
+  // ---- JSON ----
   String json = "{";
   json += "\"temperatura\":" + String(temperatura, 2) + ",";
   json += "\"humedad\":" + String(humedad, 2) + ",";
   json += "\"gps\":{";
-  json +=   "\"lat\":" + String(latitud, 6) + ",";
-  json +=   "\"lon\":" + String(longitud, 6) + ",";
-  json +=   "\"alt\":" + String(altitud, 2);
-  json += "},";
+  json += "\"lat\":" + String(latitud, 6) + ",";
+  json += "\"lon\":" + String(longitud, 6) + ",";
+  json += "\"alt\":" + String(altitud, 2) + "},";
   json += "\"orientacion\":{";
-  json +=   "\"roll\":" + String(roll, 2) + ",";
-  json +=   "\"pitch\":" + String(pitch, 2) + ",";
-  json +=   "\"yaw\":" + String(yaw, 2);
-  json += "}";
+  json += "\"roll\":" + String(roll, 2) + ",";
+  json += "\"pitch\":" + String(pitch, 2) + ",";
+  json += "\"yaw\":" + String(yaw, 2) + "}";
   json += "}";
 
-  // ---- Envío HTTP ----
-  server.send(200, "application/json", json);
+  request->send(200, "application/json", json);
 }
