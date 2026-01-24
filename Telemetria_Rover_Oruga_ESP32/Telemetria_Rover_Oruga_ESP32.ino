@@ -1,156 +1,64 @@
 #include <WiFi.h>
-#include <AsyncTCP.h>
-#include <ESPAsyncWebServer.h>
 #include "camera_driver_OV2640.h"
+#include "web_server_rover.h"
 
-// ================== CONFIGURACIÓN WIFI ==================
+// --- CONFIGURACIÓN DE RED ---
+// Cambia useAPmode a true si quieres que el Rover cree su propia red
 const char *ssid = "MOVISTAR-WIFI6-48A8";
 const char *password = "aMYFm4cR4f3c79T4Xc3X";
-
-// Modo AP
 const char *ap_ssid = "ROVER-ORUGA-TEL";
 const char *ap_password = "12345678";
 
-// true  -> AP
-// false -> STA
 bool useAPmode = false;
-
-// ================== SERVIDOR ==================
-AsyncWebServer server(80);
-
-// ================== ESTADO ==================
 bool cameraSupported = false;
 
-// ================== PROTOTIPOS ==================
-void handleHealth(AsyncWebServerRequest *request);
-void handleCapture(AsyncWebServerRequest *request);
-void handleStreamPage(AsyncWebServerRequest *request);
-void handleTelemetry(AsyncWebServerRequest *request);
+// Configuración IP Estática para el Modo AP (Punto de Acceso)
+IPAddress local_IP(192, 168, 4, 1);
+IPAddress gateway(192, 168, 4, 1);
+IPAddress subnet(255, 255, 255, 0);
 
-// ================== SETUP ==================
 void setup() {
   Serial.begin(115200);
-
-  // ---- CÁMARA ----
+  
+  // Aumentar potencia de la antena WiFi
+  WiFi.setTxPower(WIFI_POWER_19_5dBm);
+  
+  // Inicialización de la cámara
   cameraSupported = initCamera();
-  if (!cameraSupported) {
-    Serial.println("Error: cámara no soportada o fallo al iniciar");
+  if (cameraSupported) {
+    Serial.println("Cámara OV2640 inicializada correctamente");
+  } else {
+    Serial.println("Error crítico: No se pudo iniciar la cámara");
   }
 
-  // ---- WIFI ----
+  // Configuración de la conexión inalámbrica
   if (useAPmode) {
+    WiFi.softAPConfig(local_IP, gateway, subnet);
     WiFi.softAP(ap_ssid, ap_password);
-    Serial.println("Modo AP iniciado");
-    Serial.print("IP AP: ");
-    Serial.println(WiFi.softAPIP());
+    Serial.println("Modo AP iniciado. Conéctate a: " + String(ap_ssid));
+    Serial.println("IP del Rover: 192.168.4.1");
   } else {
     WiFi.begin(ssid, password);
-    Serial.print("Conectando a WiFi");
+    Serial.print("Conectando a WiFi " + String(ssid));
     while (WiFi.status() != WL_CONNECTED) {
       delay(500);
       Serial.print(".");
     }
-    Serial.println("\nWiFi conectado");
-    Serial.print("IP: ");
+    Serial.println("\nWiFi conectado con éxito");
+    Serial.print("IP del Rover: ");
     Serial.println(WiFi.localIP());
   }
 
-  // ---- ENDPOINTS ----
-  server.on("/health", HTTP_GET, handleHealth);
-  server.on("/capture", HTTP_GET, handleCapture);
-  server.on("/stream", HTTP_GET, handleStreamPage);
-  server.on("/telemetry", HTTP_GET, handleTelemetry);
-
-  server.begin();
-  Serial.println("Servidor ESPAsyncWebServer iniciado");
+  // Arranca el servidor web (definido en web_server_rover.cpp)
+  setupWebServer();
+  Serial.println("Servidor web listo para recibir peticiones");
 }
 
-// ================== LOOP ==================
 void loop() {
-  // No se usa en servidor asíncrono
-}
-
-// ================== HANDLERS ==================
-
-void handleHealth(AsyncWebServerRequest *request) {
-  String json = "{";
-  json += "\"status\":\"ok\",";
-  json += "\"camera\":";
-  json += cameraSupported ? "\"initialized\"" : "\"not_initialized\"";
-  json += "}";
-
-  request->send(200, "application/json", json);
-}
-
-void handleCapture(AsyncWebServerRequest *request) {
-
-  if (!cameraSupported) {
-    request->send(500, "text/plain", "Error de camara");
-    return;
-  }
-
-  uint8_t *img_buf = nullptr;
-  size_t img_len = 0;
-  uint16_t width = 0, height = 0;
-
-  if (getImage(&img_buf, &img_len, &width, &height) != ESP_OK || !img_buf) {
-    request->send(500, "text/plain", "Error al capturar imagen");
-    return;
-  }
-
-  AsyncWebServerResponse *response =
-      request->beginResponse_P(200, "image/jpeg", img_buf, img_len);
-
-  response->addHeader("Cache-Control", "no-store");
-  response->addHeader("Pragma", "no-cache");
-  response->addHeader("Connection", "close");
-
-  request->send(response);
-
-  free(img_buf);
-}
-
-void handleStreamPage(AsyncWebServerRequest *request) {
-
-  String html =
-      "<!DOCTYPE html>"
-      "<html><head><title>ESP32-CAM Stream</title>"
-      "<meta http-equiv='refresh' content='1'>"
-      "</head><body>"
-      "<h2>ESP32-CAM</h2>"
-      "<img src='/capture' width='640' height='480' />"
-      "</body></html>";
-
-  request->send(200, "text/html", html);
-}
-
-void handleTelemetry(AsyncWebServerRequest *request) {
-
-  // ---- Datos simulados ----
-  float temperatura = 24.6;
-  float humedad = 58.2;
-
-  float latitud = -34.6037;
-  float longitud = -58.3816;
-  float altitud = 25.4;
-
-  float roll = 1.2;
-  float pitch = -0.8;
-  float yaw = 182.5;
-
-  // ---- JSON ----
-  String json = "{";
-  json += "\"temperatura\":" + String(temperatura, 2) + ",";
-  json += "\"humedad\":" + String(humedad, 2) + ",";
-  json += "\"gps\":{";
-  json += "\"lat\":" + String(latitud, 6) + ",";
-  json += "\"lon\":" + String(longitud, 6) + ",";
-  json += "\"alt\":" + String(altitud, 2) + "},";
-  json += "\"orientacion\":{";
-  json += "\"roll\":" + String(roll, 2) + ",";
-  json += "\"pitch\":" + String(pitch, 2) + ",";
-  json += "\"yaw\":" + String(yaw, 2) + "}";
-  json += "}";
-
-  request->send(200, "application/json", json);
+  // Maneja las peticiones de los clientes (Stream, Telemetría, etc.)
+  // IMPORTANTE: No añadir setupWebServer() aquí dentro.
+  server.handleClient();
+  
+  // Pequeño delay para estabilidad del sistema
+  delay(1);
 }
