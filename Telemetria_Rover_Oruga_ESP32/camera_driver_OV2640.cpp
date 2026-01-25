@@ -47,11 +47,11 @@ bool initCamera() {
   // Si no, bajamos a una pequeña para evitar el error de Malloc.
   if(psramFound()){
     config.frame_size = FRAMESIZE_VGA; 
-    config.jpeg_quality = 10;
+    config.jpeg_quality = 12;
     config.fb_count = 2;
   } else {
     config.frame_size = FRAMESIZE_CIF; // 400x296 (Menos consumo de RAM)
-    config.jpeg_quality = 12;
+    config.jpeg_quality = 15;
     config.fb_count = 1;
   }
 
