@@ -41,11 +41,11 @@ void setup() {
   if (forceAP) {
     useAPmode = true;
     WiFi.softAPConfig(local_IP, gateway, subnet); 
-    WiFi.softAP("ROVER-CONFIG-MODE", "12345678"); 
+    WiFi.softAP("ROVER-TELEMETRIA-MODE", "12345678"); 
     Serial.println("╔═══════════════════════════════════════╗");
     Serial.println("║  MODO CONFIGURACIÓN ACTIVO (AP)      ║");
     Serial.println("║  IP: 192.168.4.1                     ║");
-    Serial.println("║  SSID: ROVER-CONFIG-MODE             ║");
+    Serial.println("║  SSID: ROVER-TELEMETRIA              ║");
     Serial.println("║  Pass: 12345678                      ║");
     Serial.println("╚═══════════════════════════════════════╝");
     
