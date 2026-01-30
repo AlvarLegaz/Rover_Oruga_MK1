@@ -61,7 +61,7 @@ while True:
                 circularity = 4 * np.pi * area / (perimeter * perimeter)
 
                 # 1 = círculo perfecto
-                if circularity > 0.7:
+                if circularity > 0.7:  # <- AQUÍ INDICAMOS CUANTA CIRCULARIDAD SE CONSIDERA UNA PELOTA
 
                     ((x, y), radius) = cv2.minEnclosingCircle(c)
 
@@ -76,7 +76,7 @@ while True:
                         cv2.circle(frame, center_ball, int(radius), (0, 255, 0), 2)
                         cv2.circle(frame, center_ball, 5, (255, 0, 0), -1)
 
-                        text = f"X:{percent_x}%  Y:{percent_y}%"
+                        text = f"Cir:{circularity:.2f} X:{percent_x}%  Y:{percent_y}%"
                         cv2.putText(frame, text,
                                     (center_ball[0] - 60, center_ball[1] - 20),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
