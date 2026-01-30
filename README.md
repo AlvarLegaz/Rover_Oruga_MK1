@@ -24,3 +24,8 @@ Repositorio de un Rover Oruga con control RC para fines didácticos.
 
 ---
 
+## Camara + Wifi ESP32-CAM
+
+<img width="1000" height="445" alt="ESP32-cam" src="https://github.com/user-attachments/assets/046bd69a-9f06-4c5c-ba71-8541da0f2e4b" />
+
+
