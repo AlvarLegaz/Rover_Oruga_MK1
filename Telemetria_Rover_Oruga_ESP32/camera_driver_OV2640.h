@@ -13,3 +13,10 @@ camera_fb_t* getCameraFrame();
 
 // Devuelve el frame a la cámara para liberar memoria
 void releaseCameraFrame(camera_fb_t* fb);
+
+// Pone camara en low rate
+void setCameraLowStreamMode();
+
+// Pone camara en normal rate
+void setCameraNormalMode();
+

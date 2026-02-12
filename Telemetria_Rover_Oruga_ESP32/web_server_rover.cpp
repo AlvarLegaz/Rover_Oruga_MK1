@@ -4,6 +4,7 @@
 #include <Preferences.h>
 #include <esp_task_wdt.h>
 
+
 extern Preferences preferences;
 WebServer server(80);
 
@@ -19,6 +20,7 @@ void setupWebServer() {
   // 2. Endpoints de cámara
   server.on("/capture", HTTP_GET, handleCapture);
   server.on("/stream", HTTP_GET, handleStream);  // Stream MJPEG para VLC
+  server.on("/stream_low", HTTP_GET, handleStreamLow);
   
   // 3. Telemetría
   server.on("/telemetry", HTTP_GET, handleTelemetry);
@@ -115,6 +117,8 @@ void handleStream() {
 
   Serial.println("🎬 Cliente VLC conectado al stream MJPEG");
 
+  setCameraNormalMode(); 
+
   unsigned long lastFrameTime = millis();
   int frameCount = 0;
 
@@ -126,6 +130,8 @@ void handleStream() {
       delay(100);
       continue;
     }
+
+    
 
     // Enviar boundary
     client.println("--frame");
@@ -165,6 +171,66 @@ void handleStream() {
   }
 
   Serial.printf("📡 Cliente VLC desconectado (enviados %d frames)\n", frameCount);
+}
+
+
+void handleStreamLow() {
+
+  if (!cameraSupported) {
+    server.send(503, "text/plain", "Camara no disponible");
+    return;
+  }
+
+  setCameraLowStreamMode();  // 👈 CAMBIO CLAVE
+
+  WiFiClient client = server.client();
+
+  client.println("HTTP/1.1 200 OK");
+  client.println("Content-Type: multipart/x-mixed-replace; boundary=frame");
+  client.println("Cache-Control: no-cache");
+  client.println("Connection: close");
+  client.println();
+
+  Serial.println("📉 Cliente conectado a STREAM LOW");
+
+  unsigned long lastFrameTime = millis();
+  int frameCount = 0;
+
+  while (client.connected()) {
+
+    camera_fb_t* fb = getCameraFrame();
+    if (!fb) {
+      delay(50);
+      continue;
+    }
+
+    client.println("--frame");
+    client.println("Content-Type: image/jpeg");
+    client.print("Content-Length: ");
+    client.println(fb->len);
+    client.println();
+
+    size_t written = client.write(fb->buf, fb->len);
+    client.println();
+
+    releaseCameraFrame(fb);
+
+    frameCount++;
+
+    if (frameCount % 30 == 0) {
+      unsigned long elapsed = millis() - lastFrameTime;
+      float fps = 30000.0 / elapsed;
+      Serial.printf("📊 LOW Stream: %.1f FPS\n", fps);
+      lastFrameTime = millis();
+    }
+
+    delay(65);              // 👈 ~15 FPS
+    esp_task_wdt_reset();
+
+    if (written == 0) break;
+  }
+
+  Serial.println("📡 Cliente desconectado de STREAM LOW");
 }
 
 void handleSave() {

@@ -203,6 +203,7 @@ const char STREAM_ONLY_HTML[] PROGMEM = R"rawliteral(
 void setupWebServer();
 void handleCapture();
 void handleStream();
+void handleStreamLow();
 void handleTelemetry();
 void handleConfig(); 
 void handleSave();

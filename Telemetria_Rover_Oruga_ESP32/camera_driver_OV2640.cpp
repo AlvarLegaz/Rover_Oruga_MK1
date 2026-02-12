@@ -71,3 +71,30 @@ camera_fb_t* getCameraFrame() {
 void releaseCameraFrame(camera_fb_t* fb) {
   if (fb) esp_camera_fb_return(fb);
 }
+
+#include "esp_camera.h"
+
+void setCameraLowStreamMode() {
+    sensor_t * s = esp_camera_sensor_get();
+    if (!s) return;
+
+    s->set_framesize(s, FRAMESIZE_QQVGA);  // 160x120
+    s->set_quality(s, 20);                // Más compresión
+    s->set_brightness(s, 0);
+    s->set_contrast(s, 0);
+    s->set_saturation(s, 0);
+
+    Serial.println("📉 STREAM LOW activado: 160x120 @ ~15 FPS");
+}
+
+void setCameraNormalMode() {
+    sensor_t * s = esp_camera_sensor_get();
+    if (!s) return;
+
+    s->set_framesize(s, FRAMESIZE_QVGA);  // 320x240
+    s->set_quality(s, 12);               // Buena calidad
+    s->set_saturation(s, 0);
+    s->set_gainceiling(s, GAINCEILING_8X);
+
+    Serial.println("📷 Modo NORMAL activado");
+}

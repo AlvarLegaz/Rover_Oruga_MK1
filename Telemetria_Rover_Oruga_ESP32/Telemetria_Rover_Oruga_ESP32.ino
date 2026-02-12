@@ -77,10 +77,7 @@ void setup() {
     
     // Reducir calidad en modo AP para evitar cuelgues
     if (cameraSupported) {
-      sensor_t* s = esp_camera_sensor_get();
-      s->set_framesize(s, FRAMESIZE_CIF); // 400x296 (menor que VGA)
-      s->set_quality(s, 18); // Más compresión (10=mejor, 63=peor)
-      Serial.println("Cámara ajustada para modo AP (CIF, Q18)");
+      setCameraLowStreamMode();
     }
     
   } 
@@ -104,6 +101,11 @@ void setup() {
       Serial.print(WiFi.localIP());
       Serial.println("              ║");
       Serial.println("╚═══════════════════════════════════════╝");
+
+      // 🔵 ACTIVAR CALIDAD NORMAL AL TENER WIFI ESTABLE
+      if (cameraSupported) {
+        setCameraNormalMode();
+      }
     } else 
     {
        Serial.println("\n⚠ Fallo conexión WiFi.");
