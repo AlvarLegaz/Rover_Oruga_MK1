@@ -3,18 +3,27 @@
 #include <Arduino.h>
 #include <Preferences.h>
 #include <esp_task_wdt.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 
 extern Preferences preferences;
 WebServer server(80);
 
+SemaphoreHandle_t camMutex = NULL;
+
 void setupWebServer() {
+
+  camMutex = xSemaphoreCreateMutex(); 
+
   // --- RUTAS ACTIVAS ---
   
   // 1. Página principal con interfaz HTML (usa /capture para imágenes)
   server.on("/", HTTP_GET, []() {
     server.send(200, "text/html", STREAM_ONLY_HTML);
   });
+
+  server.on("/info", HTTP_GET, handleInfo);
   
 
   // 2. Endpoints de cámara
@@ -30,6 +39,26 @@ void setupWebServer() {
   server.on("/save", HTTP_POST, handleSave);
 
   server.begin();
+}
+
+void handleInfo() {
+
+  String json = "{";
+  json += "\"endpoints\":[";
+
+  json += "{\"path\":\"/\",\"desc\":\"Interfaz web\"},";
+  json += "{\"path\":\"/capture\",\"desc\":\"Imagen JPEG\"},";
+  json += "{\"path\":\"/stream\",\"desc\":\"Stream MJPEG\"},";
+  json += "{\"path\":\"/stream_low\",\"desc\":\"Stream MJPEG bajo consumo\"},";
+  json += "{\"path\":\"/telemetry\",\"desc\":\"Datos JSON\"},";
+  json += "{\"path\":\"/config\",\"desc\":\"Config WiFi\"},";
+  json += "{\"path\":\"/save\",\"desc\":\"Guardar WiFi\"},";
+  json += "{\"path\":\"/info\",\"desc\":\"Lista de endpoints\"}";
+
+  json += "]";
+  json += "}";
+
+  server.send(200, "application/json", json);
 }
 
 void handleConfig() {
@@ -107,72 +136,97 @@ void handleStream() {
   }
 
   WiFiClient client = server.client();
-  
-  // Headers MJPEG estándar
+
   client.println("HTTP/1.1 200 OK");
   client.println("Content-Type: multipart/x-mixed-replace; boundary=frame");
   client.println("Cache-Control: no-cache");
   client.println("Connection: close");
   client.println();
 
-  Serial.println("🎬 Cliente VLC conectado al stream MJPEG");
+  Serial.println("🎬 Cliente conectado al stream MJPEG");
 
   setCameraNormalMode(); 
 
-  unsigned long lastFrameTime = millis();
+  const int targetFPS = (WiFi.getMode() == WIFI_AP) ? 5 : 10;
+  const int frameInterval = 1000 / targetFPS;
+
+  unsigned long lastFrameTime = 0;
+  unsigned long lastClientActivity = millis();
+  const unsigned long CLIENT_TIMEOUT = 10000;
+
+  unsigned long statsStartTime = millis();
   int frameCount = 0;
 
   while (client.connected()) {
-    camera_fb_t* fb = getCameraFrame();
-    
-    if (!fb) {
-      Serial.println("❌ Error capturando frame");
-      delay(100);
+
+    // 🚨 Timeout cliente
+    if (millis() - lastClientActivity > CLIENT_TIMEOUT) {
+      Serial.println("⏱️ Cliente inactivo, cerrando conexión");
+      break;
+    }
+
+    unsigned long now = millis();
+
+    // 🚀 CONTROL NO BLOQUEANTE
+    if (now - lastFrameTime < frameInterval) {
+      delay(1); // yield
       continue;
     }
 
-    
+    camera_fb_t* fb = NULL;
 
-    // Enviar boundary
-    client.println("--frame");
-    client.println("Content-Type: image/jpeg");
-    client.print("Content-Length: ");
-    client.println(fb->len);
-    client.println();
-    
-    // Enviar imagen
-    size_t written = client.write(fb->buf, fb->len);
-    client.println();
-    
-    releaseCameraFrame(fb);
-    
-    // Log cada 30 frames
-    frameCount++;
-    if (frameCount % 30 == 0) {
-      unsigned long elapsed = millis() - lastFrameTime;
-      float fps = 30000.0 / elapsed;
-      Serial.printf("📊 Stream stats: %.1f FPS | %d frames enviados\n", fps, frameCount);
-      lastFrameTime = millis();
+    // 🔒 MUTEX
+    if (xSemaphoreTake(camMutex, pdMS_TO_TICKS(100))) {
+
+      fb = getCameraFrame();
+
+      if (!fb) {
+        Serial.println("❌ Error capturando frame");
+        xSemaphoreGive(camMutex);
+        continue;
+      }
+
+      client.println("--frame");
+      client.println("Content-Type: image/jpeg");
+      client.print("Content-Length: ");
+      client.println(fb->len);
+      client.println();
+
+      size_t written = client.write(fb->buf, fb->len);
+      client.println();
+
+      releaseCameraFrame(fb);
+      xSemaphoreGive(camMutex); // 🔓 SIEMPRE
+
+      if (written > 0) {
+        lastClientActivity = millis();
+        lastFrameTime = now;   // 👈 SOLO si se envía
+      } else {
+        Serial.println("❌ Cliente no recibe datos");
+        break;
+      }
+
+      frameCount++;
+
+      // 📊 FPS REAL
+      if (frameCount % 30 == 0) {
+        unsigned long elapsed = millis() - statsStartTime;
+        float fps = (frameCount * 1000.0) / elapsed;
+        Serial.printf("📊 Stream REAL: %.1f FPS | %d frames\n", fps, frameCount);
+      }
+
+    } else {
+      // otro cliente usando cámara
+      delay(1);
+      continue;
     }
-    
-    // Delay según el modo
-    // En modo AP: ~200ms (5 FPS)
-    // En modo Station: ~100ms (10 FPS)
-    delay(WiFi.getMode() == WIFI_AP ? 200 : 100);
-    
-    // Resetear watchdog periódicamente
+
     esp_task_wdt_reset();
-    
-    // Si hay error de escritura, salir del loop
-    if (written == 0) {
-      Serial.println("Error enviando datos al cliente");
-      break;
-    }
   }
 
-  Serial.printf("📡 Cliente VLC desconectado (enviados %d frames)\n", frameCount);
+  client.stop();
+  Serial.printf("📡 Cliente desconectado (%d frames enviados)\n", frameCount);
 }
-
 
 void handleStreamLow() {
 
@@ -181,7 +235,7 @@ void handleStreamLow() {
     return;
   }
 
-  setCameraLowStreamMode();  // 👈 CAMBIO CLAVE
+  setCameraLowStreamMode();
 
   WiFiClient client = server.client();
 
@@ -193,43 +247,83 @@ void handleStreamLow() {
 
   Serial.println("📉 Cliente conectado a STREAM LOW");
 
-  unsigned long lastFrameTime = millis();
+  const int targetFPS = 10;
+  const int frameInterval = 1000 / targetFPS;
+
+  unsigned long lastFrameTime = 0;
+  unsigned long lastClientActivity = millis();
+  const unsigned long CLIENT_TIMEOUT = 10000;
+
+  unsigned long statsStartTime = millis(); // 👈 para FPS real
   int frameCount = 0;
 
   while (client.connected()) {
 
-    camera_fb_t* fb = getCameraFrame();
-    if (!fb) {
-      delay(50);
+    // 🚨 Timeout cliente
+    if (millis() - lastClientActivity > CLIENT_TIMEOUT) {
+      Serial.println("⏱️ Cliente inactivo (LOW), cerrando");
+      break;
+    }
+
+    unsigned long now = millis();
+
+    // 🚀 CONTROL NO BLOQUEANTE
+    if (now - lastFrameTime < frameInterval) {
+      delay(1); // yield (muy importante)
       continue;
     }
 
-    client.println("--frame");
-    client.println("Content-Type: image/jpeg");
-    client.print("Content-Length: ");
-    client.println(fb->len);
-    client.println();
+    camera_fb_t* fb = NULL;
 
-    size_t written = client.write(fb->buf, fb->len);
-    client.println();
+    // 🔒 MUTEX: acceso exclusivo a cámara
+    if (xSemaphoreTake(camMutex, pdMS_TO_TICKS(100))) {
 
-    releaseCameraFrame(fb);
+      fb = getCameraFrame();
 
-    frameCount++;
+      if (!fb) {
+        xSemaphoreGive(camMutex);
+        continue;
+      }
 
-    if (frameCount % 30 == 0) {
-      unsigned long elapsed = millis() - lastFrameTime;
-      float fps = 30000.0 / elapsed;
-      Serial.printf("📊 LOW Stream: %.1f FPS\n", fps);
-      lastFrameTime = millis();
+      client.println("--frame");
+      client.println("Content-Type: image/jpeg");
+      client.print("Content-Length: ");
+      client.println(fb->len);
+      client.println();
+
+      size_t written = client.write(fb->buf, fb->len);
+      client.println();
+
+      releaseCameraFrame(fb);
+      xSemaphoreGive(camMutex); // 🔓 liberar SIEMPRE
+
+      if (written > 0) {
+        lastClientActivity = millis();
+        lastFrameTime = now;   // 👈 SOLO si se envía correctamente
+      } else {
+        Serial.println("❌ Error enviando (LOW)");
+        break;
+      }
+
+      frameCount++;
+
+      // 📊 FPS real (corregido)
+      if (frameCount % 30 == 0) {
+        unsigned long elapsed = millis() - statsStartTime;
+        float fps = (frameCount * 1000.0) / elapsed;
+        Serial.printf("📊 LOW Stream REAL: %.1f FPS\n", fps);
+      }
+
+    } else {
+      // No pudo coger cámara (otro cliente la usa)
+      delay(1);
+      continue;
     }
 
-    delay(65);              // 👈 ~15 FPS
     esp_task_wdt_reset();
-
-    if (written == 0) break;
   }
 
+  client.stop();
   Serial.println("📡 Cliente desconectado de STREAM LOW");
 }
 

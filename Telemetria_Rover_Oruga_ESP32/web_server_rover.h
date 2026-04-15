@@ -201,6 +201,7 @@ const char STREAM_ONLY_HTML[] PROGMEM = R"rawliteral(
 
 // Prototipos de funciones para el servidor web
 void setupWebServer();
+void handleInfo();
 void handleCapture();
 void handleStream();
 void handleStreamLow();
