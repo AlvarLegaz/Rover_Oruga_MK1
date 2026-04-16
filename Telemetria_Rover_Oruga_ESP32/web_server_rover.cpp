@@ -56,24 +56,21 @@ void handleConfig() {
 
   int n = WiFi.scanNetworks();
 
-  WiFiClient client = server.client();
-
-  // Cabecera HTTP
   server.setContentLength(CONTENT_LENGTH_UNKNOWN);
   server.send(200, "text/html", "");
 
-  // HTML inicio
-  client.print(CONFIG_HEADER);
+  // Inicio HTML
+  server.sendContent(CONFIG_HEADER);
 
   if (n == 0) {
-    client.print("<p>No se encontraron redes</p>");
+    server.sendContent("<p>No se encontraron redes</p>");
   } else {
 
     char line[256];
 
     for (int i = 0; i < n; ++i) {
 
-      const char* ssid = WiFi.SSID(i).c_str();
+      String ssid = WiFi.SSID(i);
       int rssi = WiFi.RSSI(i);
       bool open = (WiFi.encryptionType(i) == WIFI_AUTH_OPEN);
 
@@ -82,18 +79,18 @@ void handleConfig() {
         "style='margin-bottom:8px; padding:10px; background:#2c2c2c; border-radius:6px; cursor:pointer;'>"
         "%s (%d dBm) %s"
         "</li>",
-        ssid,
-        ssid,
+        ssid.c_str(),
+        ssid.c_str(),
         rssi,
         open ? "abierta" : "cerrada"
       );
 
-      client.print(line);
+      server.sendContent(line);
     }
   }
 
-  // HTML final
-  client.print(CONFIG_FOOTER);
+  // Final HTML
+  server.sendContent(CONFIG_FOOTER);
 
   WiFi.scanDelete();
 }
@@ -338,7 +335,7 @@ void handleStreamLow() {
 
   client.stop();
   streamingActive = false;
-  Serial.println("📡 Cliente desconectado de STREAM LOW");
+  Serial.println("Cliente desconectado de STREAM LOW");
 }
 
 void handleSave() {
