@@ -1,16 +1,26 @@
-#include "web_server_rover.h"
-#include "camera_driver_OV2640.h"
 #include <Arduino.h>
 #include <Preferences.h>
 #include <esp_task_wdt.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
+#include "web_server_rover.h"
+#include "camera_driver_OV2640.h"
+#include "Telemetry.h"
+#include "info_page.h"
+#include "config_page.h"
+
+const int targetFPS_high  = 10;
+const int targetFPS_low = 20;
+const int web_port = 80;
 
 extern Preferences preferences;
-WebServer server(80);
+WebServer server(web_port);
+
+Telemetry telemetry;
 
 SemaphoreHandle_t camMutex = NULL;
+static volatile bool streamingActive = false;
 
 void setupWebServer() {
 
@@ -18,11 +28,8 @@ void setupWebServer() {
 
   // --- RUTAS ACTIVAS ---
   
-  // 1. Página principal con interfaz HTML (usa /capture para imágenes)
-  server.on("/", HTTP_GET, []() {
-    server.send(200, "text/html", STREAM_ONLY_HTML);
-  });
 
+  server.on("/", HTTP_GET, handleInfo);
   server.on("/info", HTTP_GET, handleInfo);
   
 
@@ -42,80 +49,61 @@ void setupWebServer() {
 }
 
 void handleInfo() {
-
-  String json = "{";
-  json += "\"endpoints\":[";
-
-  json += "{\"path\":\"/\",\"desc\":\"Interfaz web\"},";
-  json += "{\"path\":\"/capture\",\"desc\":\"Imagen JPEG\"},";
-  json += "{\"path\":\"/stream\",\"desc\":\"Stream MJPEG\"},";
-  json += "{\"path\":\"/stream_low\",\"desc\":\"Stream MJPEG bajo consumo\"},";
-  json += "{\"path\":\"/telemetry\",\"desc\":\"Datos JSON\"},";
-  json += "{\"path\":\"/config\",\"desc\":\"Config WiFi\"},";
-  json += "{\"path\":\"/save\",\"desc\":\"Guardar WiFi\"},";
-  json += "{\"path\":\"/info\",\"desc\":\"Lista de endpoints\"}";
-
-  json += "]";
-  json += "}";
-
-  server.send(200, "application/json", json);
+  server.send_P(200, "text/html", INFO_PAGE);
 }
 
 void handleConfig() {
-  int n = WiFi.scanNetworks();  // Escanear redes WiFi
 
-  String html = "<html><body style='font-family:sans-serif; background:#1a1a1a; color:white; padding:20px;'>";
-  html += "<h2>Configuracion WiFi</h2>";
+  int n = WiFi.scanNetworks();
 
-  // ===== LISTA DE REDES =====
-  html += "<h3>Redes disponibles:</h3>";
+  WiFiClient client = server.client();
+
+  // Cabecera HTTP
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.send(200, "text/html", "");
+
+  // HTML inicio
+  client.print(CONFIG_HEADER);
 
   if (n == 0) {
-    html += "<p>No se encontraron redes</p>";
+    client.print("<p>No se encontraron redes</p>");
   } else {
-    html += "<ul style='list-style:none; padding:0;'>";
+
+    char line[256];
 
     for (int i = 0; i < n; ++i) {
-      String ssid = WiFi.SSID(i);
+
+      const char* ssid = WiFi.SSID(i).c_str();
       int rssi = WiFi.RSSI(i);
       bool open = (WiFi.encryptionType(i) == WIFI_AUTH_OPEN);
 
-      html += "<li onclick=\"document.getElementsByName('ssid')[0].value='";
-      html += ssid;
-      html += "'\" ";
-      html += "style='margin-bottom:8px; padding:10px; background:#2c2c2c; border-radius:6px; cursor:pointer;'>";
+      snprintf(line, sizeof(line),
+        "<li onclick=\"document.getElementsByName('ssid')[0].value='%s'\" "
+        "style='margin-bottom:8px; padding:10px; background:#2c2c2c; border-radius:6px; cursor:pointer;'>"
+        "%s (%d dBm) %s"
+        "</li>",
+        ssid,
+        ssid,
+        rssi,
+        open ? "abierta" : "cerrada"
+      );
 
-      html += ssid;
-      html += " (";
-      html += rssi;
-      html += " dBm) ";
-      html += open ? "abierta" : "cerrada";
-      html += "</li>";
+      client.print(line);
     }
-
-    html += "</ul>";
   }
 
-  // ===== FORMULARIO =====
-  html += "<form action='/save' method='POST'>";
-  html += "SSID:<br><input type='text' name='ssid' style='width:100%; padding:10px; border-radius:6px; border:none;'><br><br>";
-  html += "Pass:<br><input type='password' name='pass' style='width:100%; padding:10px; border-radius:6px; border:none;'><br><br>";
-  html += "<input type='submit' value='GUARDAR' style='width:100%; padding:15px; background:#e67e22; color:white; border:none; border-radius:6px;'>";
-  html += "</form>";
+  // HTML final
+  client.print(CONFIG_FOOTER);
 
-  html += "<p style='font-size:12px; opacity:0.6;'>Toca una red para copiar el nombre automaticamente</p>";
-
-  html += "</body></html>";
-
-  server.send(200, "text/html", html);
-
-  WiFi.scanDelete();  // Liberar memoria
+  WiFi.scanDelete();
 }
 
 
 void handleTelemetry() {
-  // Enviamos el JSON que pediste anteriormente
-  String json = "{\"temperatura\":24.6, \"humedad\":58.2, \"gps\":{\"lat\":-34.6, \"lon\":-58.3}}";
+  char json[160];
+
+  telemetry.toJSON(json, sizeof(json));
+
   server.send(200, "application/json", json);
 }
 
@@ -135,6 +123,14 @@ void handleStream() {
     return;
   }
 
+  // Evitar múltiples clientes
+  if (streamingActive) {
+    server.send(503, "text/plain", "Stream ocupado");
+    return;
+  }
+
+  streamingActive = true;
+
   WiFiClient client = server.client();
 
   client.println("HTTP/1.1 200 OK");
@@ -145,10 +141,11 @@ void handleStream() {
 
   Serial.println("🎬 Cliente conectado al stream MJPEG");
 
+  xSemaphoreTake(camMutex, portMAX_DELAY);
   setCameraNormalMode(); 
+  xSemaphoreGive(camMutex);
 
-  const int targetFPS = (WiFi.getMode() == WIFI_AP) ? 5 : 10;
-  const int frameInterval = 1000 / targetFPS;
+  const int frameInterval = 1000 / targetFPS_high;
 
   unsigned long lastFrameTime = 0;
   unsigned long lastClientActivity = millis();
@@ -159,7 +156,7 @@ void handleStream() {
 
   while (client.connected()) {
 
-    // 🚨 Timeout cliente
+    // Timeout cliente
     if (millis() - lastClientActivity > CLIENT_TIMEOUT) {
       Serial.println("⏱️ Cliente inactivo, cerrando conexión");
       break;
@@ -221,10 +218,14 @@ void handleStream() {
       continue;
     }
 
+    //CLAVE: dejar respirar al sistema
+    vTaskDelay(2);
     esp_task_wdt_reset();
   }
 
   client.stop();
+  streamingActive = false;
+
   Serial.printf("📡 Cliente desconectado (%d frames enviados)\n", frameCount);
 }
 
@@ -235,7 +236,17 @@ void handleStreamLow() {
     return;
   }
 
+  // 🚫 Evitar múltiples clientes
+  if (streamingActive) {
+    server.send(503, "text/plain", "Stream ocupado");
+    return;
+  }
+
+  streamingActive = true;
+  
+  xSemaphoreTake(camMutex, portMAX_DELAY);
   setCameraLowStreamMode();
+  xSemaphoreGive(camMutex);
 
   WiFiClient client = server.client();
 
@@ -247,8 +258,8 @@ void handleStreamLow() {
 
   Serial.println("📉 Cliente conectado a STREAM LOW");
 
-  const int targetFPS = 10;
-  const int frameInterval = 1000 / targetFPS;
+  
+  const int frameInterval = 1000 / targetFPS_low;
 
   unsigned long lastFrameTime = 0;
   unsigned long lastClientActivity = millis();
@@ -320,10 +331,13 @@ void handleStreamLow() {
       continue;
     }
 
+    //CLAVE: dejar respirar al sistema
+    vTaskDelay(2);
     esp_task_wdt_reset();
   }
 
   client.stop();
+  streamingActive = false;
   Serial.println("📡 Cliente desconectado de STREAM LOW");
 }
 

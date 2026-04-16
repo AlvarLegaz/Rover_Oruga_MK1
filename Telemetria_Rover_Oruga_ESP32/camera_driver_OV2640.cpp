@@ -49,10 +49,15 @@ bool initCamera() {
     config.frame_size = FRAMESIZE_VGA; 
     config.jpeg_quality = 12;
     config.fb_count = 2;
+
+    config.grab_mode = CAMERA_GRAB_LATEST; // 🔥 AQUÍ ESTÁ EL BOOST
   } else {
     config.frame_size = FRAMESIZE_CIF; // 400x296 (Menos consumo de RAM)
     config.jpeg_quality = 15;
     config.fb_count = 1;
+
+    // opcional (no tendrá efecto real con fb_count=1)
+    config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
   }
 
   esp_err_t err = esp_camera_init(&config);
@@ -79,12 +84,19 @@ void setCameraLowStreamMode() {
     if (!s) return;
 
     s->set_framesize(s, FRAMESIZE_QQVGA);  // 160x120
-    s->set_quality(s, 20);                // Más compresión
+    s->set_quality(s, 25);                // 🔥 más compresión
+
     s->set_brightness(s, 0);
     s->set_contrast(s, 0);
     s->set_saturation(s, 0);
 
-    Serial.println("📉 STREAM LOW activado: 160x120 @ ~15 FPS");
+    s->set_gain_ctrl(s, 1);
+    s->set_exposure_ctrl(s, 1);
+    s->set_awb_gain(s, 1);
+
+    s->set_gainceiling(s, GAINCEILING_2X);
+
+    Serial.println("📉 STREAM LOW optimizado: +FPS");
 }
 
 void setCameraNormalMode() {
@@ -92,9 +104,14 @@ void setCameraNormalMode() {
     if (!s) return;
 
     s->set_framesize(s, FRAMESIZE_QVGA);  // 320x240
-    s->set_quality(s, 12);               // Buena calidad
-    s->set_saturation(s, 0);
-    s->set_gainceiling(s, GAINCEILING_8X);
+    s->set_quality(s, 18);               // 
 
-    Serial.println("📷 Modo NORMAL activado");
+    s->set_saturation(s, 0);
+    s->set_gainceiling(s, GAINCEILING_4X);
+
+    s->set_gain_ctrl(s, 1);
+    s->set_exposure_ctrl(s, 1);
+    s->set_awb_gain(s, 1);
+
+    Serial.println("📷 NORMAL optimizado: mejor FPS");
 }
