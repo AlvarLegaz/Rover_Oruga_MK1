@@ -27,7 +27,7 @@ void setup() {
   
   // 1. Configura Watchdog
 
-  Serial.println("Inicializando Watchdog (30s timeout)...");
+ // Serial.println("Inicializando Watchdog (30s timeout)...");
 
   // Desinicializar watchdog por defecto si existe
   esp_task_wdt_deinit();
