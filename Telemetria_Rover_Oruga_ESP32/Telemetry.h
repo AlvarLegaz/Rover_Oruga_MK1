@@ -1,34 +1,27 @@
+// Telemetry.h
+
 #ifndef TELEMETRY_H
 #define TELEMETRY_H
 
 #include <Arduino.h>
+#include "gps.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 class Telemetry {
 public:
-float temp;
-float bat;
+    Telemetry();
+    void begin();
+    void updateInputs();
+    void toJSON(char* buffer, size_t size);
 
-// GPS
-float lat;
-float lon;
-float course;
-uint8_t fix;
-uint8_t sat;
+private:
 
-// Constructor
-Telemetry();
+    float temp;
+    float bat;
+    GPSData gps;
 
-// Update general
-void update(float t, float b);
-
-// Update GPS
-void updateGPS(float la, float lo, float c, uint8_t f, uint8_t s);
-
-// JSON
-void toJSON(char* buffer, size_t size);
-
-
+    SemaphoreHandle_t mutex;
 };
 
 #endif
-

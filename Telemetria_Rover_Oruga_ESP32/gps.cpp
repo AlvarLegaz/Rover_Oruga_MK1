@@ -1,118 +1,176 @@
 #include "gps.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/semphr.h"
 
 HardwareSerial GPS(2);
 
-float gps_lat = 0;
-float gps_lon = 0;
-float gps_speed = 0;
-float gps_course = 0;
-int gps_sats = 0;
-bool gps_fix = false;
+// ============================
+// Estado privado del módulo
+// ============================
+static GPSData gpsData;
+static SemaphoreHandle_t gpsMutex = nullptr;
 
-String line = "";
+static String line = "";
 
-float convLat(String v, String h){
-  float x = v.substring(0,2).toFloat() + v.substring(2).toFloat()/60.0;
-  if(h=="S") x=-x;
-  return x;
+// ============================
+// Utilidades internas
+// ============================
+static float convLat(const String& v, const String& h) {
+    float x = v.substring(0, 2).toFloat() +
+              v.substring(2).toFloat() / 60.0f;
+
+    if (h == "S") x = -x;
+    return x;
 }
 
-float convLon(String v, String h){
-  float x = v.substring(0,3).toFloat() + v.substring(3).toFloat()/60.0;
-  if(h=="W") x=-x;
-  return x;
+static float convLon(const String& v, const String& h) {
+    float x = v.substring(0, 3).toFloat() +
+              v.substring(3).toFloat() / 60.0f;
+
+    if (h == "W") x = -x;
+    return x;
 }
 
-const char* courseToText(float deg){
-  static const char* d[]={"N","NE","E","SE","S","SO","O","NO"};
-  return d[(int)((deg+22.5)/45.0) % 8];
+// ============================
+// API pública
+// ============================
+const char* courseToText(float deg) {
+    static const char* dir[] = {
+        "N", "NE", "E", "SE",
+        "S", "SO", "O", "NO"
+    };
+
+    return dir[(int)((deg + 22.5f) / 45.0f) % 8];
 }
 
-void parseNMEA(String s){
+GPSData getGPSData() {
+    GPSData copy;
 
-  if(s.startsWith("$GNGLL")){
-    Serial.println(s);
-    int p[8],n=0;
+    xSemaphoreTake(gpsMutex, portMAX_DELAY);
+    copy = gpsData;
+    xSemaphoreGive(gpsMutex);
 
-    for(int i=0;i<s.length() && n<8;i++)
-      if(s[i]==',') p[n++]=i;
+    return copy;
+}
 
-    gps_lat = convLat(s.substring(p[0]+1,p[1]), s.substring(p[1]+1,p[2]));
-    gps_lon = convLon(s.substring(p[2]+1,p[3]), s.substring(p[3]+1,p[4]));
-    gps_fix = s.substring(p[5]+1,p[6])=="A";
-  }
+// ============================
+// Parser NMEA
+// ============================
+static void parseNMEA(const String& s) {
 
-  if(s.startsWith("$GNRMC")){
-    String t[16];
-    int n=0,last=0;
+    if (s.startsWith("$GNGLL")) {
 
-    for(int i=0;i<s.length();i++){
-      if(s[i]==','){
-        t[n++] = s.substring(last,i);
-        last=i+1;
-      }
+        int p[8], n = 0;
+
+        for (int i = 0; i < s.length() && n < 8; i++) {
+            if (s[i] == ',') p[n++] = i;
+        }
+
+        xSemaphoreTake(gpsMutex, portMAX_DELAY);
+
+        gpsData.lat = convLat(
+            s.substring(p[0] + 1, p[1]),
+            s.substring(p[1] + 1, p[2])
+        );
+
+        gpsData.lon = convLon(
+            s.substring(p[2] + 1, p[3]),
+            s.substring(p[3] + 1, p[4])
+        );
+
+        gpsData.fix =
+            (s.substring(p[5] + 1, p[6]) == "A");
+
+        xSemaphoreGive(gpsMutex);
     }
 
-    gps_speed = t[7].toFloat()*1.852;
-    gps_course = t[8].toFloat();
-  }
+    if (s.startsWith("$GNRMC")) {
 
-  if(s.startsWith("$GPGSV") || s.startsWith("$GNGSV")){
-    String t[6];
-    int n=0,last=0;
+        String t[16];
+        int n = 0;
+        int last = 0;
 
-    for(int i=0;i<s.length();i++){
-      if(s[i]==','){
-        t[n++] = s.substring(last,i);
-        last=i+1;
-        if(n>=4) break;
-      }
+        for (int i = 0; i < s.length(); i++) {
+            if (s[i] == ',') {
+                t[n++] = s.substring(last, i);
+                last = i + 1;
+            }
+        }
+
+        xSemaphoreTake(gpsMutex, portMAX_DELAY);
+
+        gpsData.speed = t[7].toFloat() * 1.852f;
+        gpsData.course = t[8].toFloat();
+
+        xSemaphoreGive(gpsMutex);
     }
 
-    gps_sats = t[3].toInt();
-    Serial.print("Satelites GPS: ");
-    Serial.println(gps_sats);
-    Serial.print("LAT GPS: ");
-    Serial.println(gps_lat);
-    Serial.print("LONG GPS: ");
-    Serial.println(gps_lon);
-    
-  }
-}
+    if (s.startsWith("$GPGSV") || s.startsWith("$GNGSV")) {
 
-void gpsTask(void *p){
+        String t[6];
+        int n = 0;
+        int last = 0;
 
-  while(true){
+        for (int i = 0; i < s.length(); i++) {
+            if (s[i] == ',') {
+                t[n++] = s.substring(last, i);
+                last = i + 1;
+                if (n >= 4) break;
+            }
+        }
 
-    while(GPS.available()){
-
-      char c = GPS.read();
-
-      if(c=='\n'){
-        parseNMEA(line);
-        line="";
-      }
-      else if(c!='\r'){
-        line += c;
-      }
+        xSemaphoreTake(gpsMutex, portMAX_DELAY);
+        gpsData.sats = t[3].toInt();
+        xSemaphoreGive(gpsMutex);
     }
-
-    vTaskDelay(10/portTICK_PERIOD_MS);
-  }
 }
 
-void initGPS(int rxPin, int txPin, uint32_t baud){
+// ============================
+// Tarea GPS
+// ============================
+static void gpsTask(void* p) {
 
-  GPS.begin(baud, SERIAL_8N1, rxPin, txPin);
-  Serial.println("Iniciando GPS");
+    while (true) {
 
-  xTaskCreatePinnedToCore(
-    gpsTask,
-    "gpsTask",
-    4096,
-    NULL,
-    1,
-    NULL,
-    1
-  );
+        while (GPS.available()) {
+
+            char c = GPS.read();
+
+            if (c == '\n') {
+                parseNMEA(line);
+                line = "";
+            }
+            else if (c != '\r') {
+                line += c;
+            }
+        }
+
+        vTaskDelay(10 / portTICK_PERIOD_MS);
+    }
+}
+
+// ============================
+// Inicialización
+// ============================
+void initGPS(int rxPin, int txPin, uint32_t baud) {
+
+    gpsMutex = xSemaphoreCreateMutex();
+
+    GPS.begin(
+        baud,
+        SERIAL_8N1,
+        rxPin,
+        txPin
+    );
+
+    xTaskCreatePinnedToCore(
+        gpsTask,
+        "gpsTask",
+        4096,
+        nullptr,
+        1,
+        nullptr,
+        1
+    );
 }

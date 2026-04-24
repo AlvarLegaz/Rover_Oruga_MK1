@@ -4,23 +4,27 @@
 #include <Arduino.h>
 #include <HardwareSerial.h>
 
-// Variables públicas
-extern float gps_lat;
-extern float gps_lon;
-extern float gps_speed;     // km/h
-extern float gps_course;    // grados
-extern int   gps_sats;
-extern bool  gps_fix;
+// ============================
+// Estructura pública de datos
+// ============================
+struct GPSData {
+    float lat = 0.0f;
+    float lon = 0.0f;
+    float speed = 0.0f;     // km/h
+    float course = 0.0f;    // grados
+    int sats = 0;
+    bool fix = false;
+};
 
-// UART GPS
-extern HardwareSerial GPS;
+// ============================
+// API pública del módulo GPS
+// ============================
 
-// Funciones
+// Inicializa UART y lanza tarea GPS
 void initGPS(int rxPin, int txPin, uint32_t baud = 38400);
-void gpsTask(void *pvParameters);
-void parseNMEA(String line);
-
-// Utilidades
+// Devuelve snapshot seguro del estado GPS
+GPSData getGPSData();
+// Conversión rumbo grados -> texto
 const char* courseToText(float deg);
 
 #endif
