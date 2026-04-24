@@ -33,7 +33,7 @@ LEFT_PANEL_WIDTH = 260
 RIGHT_PANEL_WIDTH = 220
 
 # tiempos
-TELEMETRY_INTERVAL_MS = 500
+TELEMETRY_INTERVAL_MS = 1000
 RECONNECT_DELAY = 2
 
 # ==========================================================
@@ -341,10 +341,17 @@ class Visor:
 
             data = r.json()
 
-            txt = ""
+            def format_dict(d, indent=0):
+                txt = ""
+                for k, v in d.items():
+                    if isinstance(v, dict):
+                        txt += " " * indent + f"{k}:\n"
+                        txt += format_dict(v, indent + 2)
+                    else:
+                        txt += " " * indent + f"{k}: {v}\n"
+                return txt
 
-            for k, v in data.items():
-                txt += f"{k}: {v}\n"
+            txt = format_dict(data)
 
             self.telemetry_display.configure(
                 text=txt
