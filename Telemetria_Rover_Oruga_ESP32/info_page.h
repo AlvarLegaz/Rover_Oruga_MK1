@@ -93,13 +93,15 @@ Básicamente, se está confiando en que nadie mire… lo que en la práctica sig
 
 <ul>
 <li><a href='/'>/</a> Pagina principal</li>
-<li><a href='/capture'>/capture</a> Captura unica en formato JPEG</li>
-<li><a href='/stream'>/stream</a> Stream MJPEG</li>
-<li><a href='/stream_low'>/stream_low</a> Stream MJPEG baja resolución y altos FPS para tiempo real</li>
-<li><a href='/telemetry'>/telemetry</a> Datos en formato JSON</li>
 <li><a href='/config'>/config</a> Configuracion de red WiFi</li>
 <li><a href='/save'>/save</a> Guardar configuracion WiFi</li>
 <li><a href='/info'>/info</a> Esta pagina</li>
+<li><a href='/telemetry'>/telemetry</a> Datos en formato JSON</li>
+<li><a href='/luces/on'>/luces/on</a> Encender flash LED</li>
+<li><a href='/luces/off'>/luces/off</a> Apagar flash LED</li>
+<li><a href='/capture'>/capture</a> Captura unica en formato JPEG</li>
+<li><a href='/stream'>/stream</a> Stream MJPEG</li>
+<li><a href='/stream_low'>/stream_low</a> Stream MJPEG baja resolución y altos FPS para tiempo real</li>
 </ul>
 
 <footer style={{ marginTop: "2rem", fontSize: "0.9rem", opacity: 0.7 }}>

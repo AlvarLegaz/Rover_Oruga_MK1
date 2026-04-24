@@ -16,6 +16,9 @@ void setupWebServer();
 void handleInfo();
 void handleTelemetry();
 
+void handleLightsOn();
+void handleLightsOff();
+
 void handleCapture();
 void handleStream();
 void handleStreamLow();

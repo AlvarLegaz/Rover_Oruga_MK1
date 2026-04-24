@@ -66,11 +66,14 @@ void setupWebServer() {
     server.on("/", HTTP_GET, handleInfo);
     server.on("/info", HTTP_GET, handleInfo);
 
+    server.on("/telemetry", HTTP_GET, handleTelemetry);
+
+    server.on("/luces/on", HTTP_GET, handleLightsOn);
+    server.on("/luces/off", HTTP_GET, handleLightsOff);
+
     server.on("/capture", HTTP_GET, handleCapture);
     server.on("/stream", HTTP_GET, handleStream);
     server.on("/stream_low", HTTP_GET, handleStreamLow);
-
-    server.on("/telemetry", HTTP_GET, handleTelemetry);
 
     server.on("/config", HTTP_GET, handleConfig);
     server.on("/save", HTTP_POST, handleSave);
@@ -105,6 +108,20 @@ void handleTelemetry() {
     telemetry.toJSON(json, sizeof(json));
 
     server.send(200, "application/json", json);
+}
+
+// ==================================================
+// CONTROL LUCES
+// ==================================================
+
+void handleLightsOn() {
+    digitalWrite(4, HIGH);
+    server.send(200, "text/plain", "Luces ON");
+}
+
+void handleLightsOff() {
+    digitalWrite(4, LOW);
+    server.send(200, "text/plain", "Luces OFF");
 }
 
 // ==================================================
