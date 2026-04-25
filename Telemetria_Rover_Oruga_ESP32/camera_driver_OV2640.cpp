@@ -96,7 +96,7 @@ void setCameraLowStreamMode() {
 
     s->set_gainceiling(s, GAINCEILING_2X);
 
-    Serial.println("📉 STREAM LOW optimizado: +FPS");
+    Serial.println("STREAM LOW optimizado: +FPS");
 }
 
 void setCameraNormalMode() {
@@ -113,5 +113,5 @@ void setCameraNormalMode() {
     s->set_exposure_ctrl(s, 1);
     s->set_awb_gain(s, 1);
 
-    Serial.println("📷 NORMAL optimizado: mejor FPS");
+    Serial.println("STREAM HIGH optimizado: mejor FPS");
 }

@@ -67,6 +67,9 @@ void setupWebServer() {
     server.on("/info", HTTP_GET, handleInfo);
 
     server.on("/telemetry", HTTP_GET, handleTelemetry);
+    server.on("/system", HTTP_GET, handleSystem);
+    server.on("/gps", HTTP_GET, handleGPS);
+    server.on("/imu", HTTP_GET, handleIMU);
 
     server.on("/luces/on", HTTP_GET, handleLightsOn);
     server.on("/luces/off", HTTP_GET, handleLightsOff);
@@ -110,16 +113,39 @@ void handleTelemetry() {
     server.send(200, "application/json", json);
 }
 
+void handleSystem()
+{
+    char json[128];
+    telemetry.toJSONSystem(json,sizeof(json));
+    server.send(200,"application/json",json);
+}
+
+void handleGPS()
+{
+    char json[256];
+    telemetry.toJSONGPS(json,sizeof(json));
+    server.send(200,"application/json",json);
+}
+
+void handleIMU()
+{
+    char json[256];
+    telemetry.toJSONIMU(json,sizeof(json));
+    server.send(200,"application/json",json);
+}
+
 // ==================================================
 // CONTROL LUCES
 // ==================================================
 
 void handleLightsOn() {
+    pinMode(4, OUTPUT);
     digitalWrite(4, HIGH);
     server.send(200, "text/plain", "Luces ON");
 }
 
 void handleLightsOff() {
+    pinMode(4, OUTPUT);
     digitalWrite(4, LOW);
     server.send(200, "text/plain", "Luces OFF");
 }
@@ -248,7 +274,6 @@ static void streamTask(void* param) {
         }
 
         vTaskDelay(2);
-        esp_task_wdt_reset();
     }
 
     client.stop();
@@ -360,7 +385,6 @@ static void streamLowTask(void* param) {
         }
 
         vTaskDelay(2);
-        esp_task_wdt_reset();
     }
 
     client.stop();

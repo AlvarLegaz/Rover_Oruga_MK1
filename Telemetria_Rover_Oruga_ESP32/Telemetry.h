@@ -13,7 +13,11 @@ public:
     Telemetry();
     void begin();
     void updateInputs();
+
     void toJSON(char* buffer, size_t size);
+    void toJSONSystem(char* buffer, size_t size);
+    void toJSONGPS(char* buffer, size_t size);
+    void toJSONIMU(char* buffer, size_t size);
 
 private:
 

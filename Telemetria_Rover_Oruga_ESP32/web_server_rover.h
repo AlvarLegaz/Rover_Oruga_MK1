@@ -15,6 +15,9 @@ void setupWebServer();
 // Rutas HTTP
 void handleInfo();
 void handleTelemetry();
+void handleSystem();
+void handleGPS();
+void handleIMU();
 
 void handleLightsOn();
 void handleLightsOff();

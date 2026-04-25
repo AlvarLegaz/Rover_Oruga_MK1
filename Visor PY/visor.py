@@ -35,7 +35,7 @@ RIGHT_PANEL_WIDTH = 240
 TELEMETRY_INTERVAL_MS = 1000
 RECONNECT_DELAY = 2
 
-STREAM_ENDPOINT = "/stream_low"
+STREAM_ENDPOINT = "/stream"
 TELEMETRY_ENDPOINT = "/telemetry"
 
 LIGHT_ON_ENDPOINT = "/luces/on"
@@ -363,7 +363,6 @@ class Visor:
             response = None
 
             try:
-
                 response = self.stream_session.get(
                     url,
                     stream=True,
@@ -374,7 +373,7 @@ class Visor:
 
                 buffer = b""
 
-                for chunk in response.iter_content(1024):
+                for chunk in response.iter_content(chunk_size=512):
 
                     if not self.running:
                         return
@@ -384,28 +383,36 @@ class Visor:
 
                     buffer += chunk
 
-                    if len(buffer) > 300000:
-                        buffer = buffer[-100000:]
+                    # Evita crecimiento infinito de memoria
+                    if len(buffer) > 400000:
+                        buffer = buffer[-150000:]
 
-                    a = buffer.find(b'\xff\xd8')
-                    b = buffer.find(b'\xff\xd9')
+                    # Procesa TODOS los frames disponibles
+                    while True:
 
-                    if a != -1 and b != -1 and b > a:
+                        a = buffer.find(b'\xff\xd8')   # JPEG start
+                        b = buffer.find(b'\xff\xd9', a + 2)  # JPEG end
+
+                        if a == -1 or b == -1:
+                            break
 
                         jpg = buffer[a:b+2]
                         buffer = buffer[b+2:]
 
                         now = time.time()
 
-                        if now - self.last_frame_time < (1/self.max_fps):
+                        # Limitador FPS local
+                        if now - self.last_frame_time < (1 / self.max_fps):
                             continue
 
                         self.last_frame_time = now
 
                         try:
                             img = Image.open(BytesIO(jpg))
+                            img = img.convert("RGB")
                             img = img.resize(
-                                (STREAM_WIDTH, STREAM_HEIGHT)
+                                (STREAM_WIDTH, STREAM_HEIGHT),
+                                Image.Resampling.LANCZOS
                             )
 
                             self.root.after(
@@ -680,21 +687,34 @@ class Visor:
     # FULLSCREEN TACTICO
     # ==================================================
 
+
     def open_tactical_mode(self, event=None):
 
         if self.tactical_window:
             return
 
+        self.zoom_factor = 1.0
+
         self.tactical_window = tk.Toplevel(self.root)
         self.tactical_window.configure(bg="black")
         self.tactical_window.attributes("-fullscreen", True)
 
+        # VIDEO FULLSCREEN
         self.tactical_label = Label(
             self.tactical_window,
-            bg="black"
+            bg="black",
+            bd=0,
+            highlightthickness=0
         )
-        self.tactical_label.pack(fill="both", expand=True)
 
+        self.tactical_label.place(
+            x=0,
+            y=0,
+            relwidth=1,
+            relheight=1
+        )
+
+        # HUD SUPERIOR
         self.tactical_hud = Label(
             self.tactical_window,
             text="VIDEO LINK",
@@ -704,24 +724,10 @@ class Visor:
             padx=12,
             pady=6
         )
+
         self.tactical_hud.place(x=20, y=20)
 
-        self.crosshair = tk.Canvas(
-            self.tactical_window,
-            bg="black",
-            highlightthickness=0
-        )
-
-        self.crosshair.place(
-            relx=0.5,
-            rely=0.5,
-            anchor="center",
-            width=120,
-            height=120
-        )
-
-        self.draw_crosshair()
-
+        # EVENTOS
         self.tactical_window.bind(
             "<Escape>",
             self.close_tactical_mode
@@ -730,6 +736,23 @@ class Visor:
         self.tactical_window.bind(
             "<Double-Button-1>",
             self.close_tactical_mode
+        )
+
+        # Zoom rueda ratón Windows
+        self.tactical_window.bind(
+            "<MouseWheel>",
+            self.tactical_zoom
+        )
+
+        # Zoom Linux
+        self.tactical_window.bind(
+            "<Button-4>",
+            self.tactical_zoom
+        )
+
+        self.tactical_window.bind(
+            "<Button-5>",
+            self.tactical_zoom
         )
 
     def close_tactical_mode(self, event=None):
@@ -741,6 +764,33 @@ class Visor:
         self.tactical_label = None
         self.tactical_hud = None
         self.crosshair = None
+
+    def tactical_zoom(self, event):
+
+        if not self.tactical_window:
+            return
+
+        # Windows
+        if hasattr(event, "delta"):
+
+            if event.delta > 0:
+                self.zoom_factor += 0.15
+            else:
+                self.zoom_factor -= 0.15
+
+        else:
+            # Linux
+            if event.num == 4:
+                self.zoom_factor += 0.15
+            elif event.num == 5:
+                self.zoom_factor -= 0.15
+
+        # límites
+        if self.zoom_factor < 1.0:
+            self.zoom_factor = 1.0
+
+        if self.zoom_factor > 4.0:
+            self.zoom_factor = 4.0    
 
     def draw_crosshair(self):
 

@@ -96,12 +96,18 @@ Básicamente, se está confiando en que nadie mire… lo que en la práctica sig
 <li><a href='/config'>/config</a> Configuracion de red WiFi</li>
 <li><a href='/save'>/save</a> Guardar configuracion WiFi</li>
 <li><a href='/info'>/info</a> Esta pagina</li>
-<li><a href='/telemetry'>/telemetry</a> Datos en formato JSON</li>
+
+<li><a href='/telemetry'>/telemetry</a> Telemetria completa JSON (system + gps + imu)</li>
+<li><a href='/system'>/system</a> Estado general JSON (bateria + temperatura)</li>
+<li><a href='/gps'>/gps</a> Datos GPS JSON</li>
+<li><a href='/imu'>/imu</a> Datos inerciales JSON (MPU9250 + BMP280)</li>
+
 <li><a href='/luces/on'>/luces/on</a> Encender flash LED</li>
 <li><a href='/luces/off'>/luces/off</a> Apagar flash LED</li>
+
 <li><a href='/capture'>/capture</a> Captura unica en formato JPEG</li>
-<li><a href='/stream'>/stream</a> Stream MJPEG</li>
-<li><a href='/stream_low'>/stream_low</a> Stream MJPEG baja resolución y altos FPS para tiempo real</li>
+<li><a href='/stream'>/stream</a> Stream MJPEG alta calidad</li>
+<li><a href='/stream_low'>/stream_low</a> Stream MJPEG baja resolucion y altos FPS para tiempo real</li>
 </ul>
 
 <footer style={{ marginTop: "2rem", fontSize: "0.9rem", opacity: 0.7 }}>

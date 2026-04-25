@@ -72,7 +72,7 @@ void initWatchdog() {
 }
 
 void initWiFi(bool forceAP) {
-  preferences.begin("wifi-conf", true);
+  preferences.begin("wifi", true);
   String ssid = preferences.getString("ssid", "");
   String pass = preferences.getString("pass", ""); 
   preferences.end(); 
@@ -80,9 +80,14 @@ void initWiFi(bool forceAP) {
   WiFi.setTxPower(WIFI_POWER_19_5dBm);
 
   if (forceAP || ssid.length() == 0) {
+    if(ssid.length() == 0)
+      Serial.println("SSID vacío");
+    if(forceAP)
+      Serial.println("Fuerza arranque en AP por entrada");  
     startAPMode();
   } else {
     if (!connectToWiFi(ssid, pass)) {
+      Serial.println("Fallo al conectar Wifi, pasamos a modo AP");
       startAPMode(); // Si falla la conexión, fallback a AP
     }
   }

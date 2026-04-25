@@ -2,6 +2,7 @@
 
 #include "Telemetry.h"
 #include "freertos/task.h"
+#include "imu.h"
 
 static void telemetryTask(void* param) {
 
@@ -24,6 +25,7 @@ Telemetry::Telemetry()
 void Telemetry::begin() {
 
     initGPS(13, 12, 38400);
+    initIMU(15,14);
 
     mutex = xSemaphoreCreateMutex();
 
@@ -42,7 +44,11 @@ void Telemetry::updateInputs() {
 
     float newTemp = 24.0f + (millis() % 1000) / 100.0f;
     float newBat  = 12.6f - (millis() % 500) / 1000.0f;
+    
     GPSData newGps = getGPSData();
+
+    updateIMU();
+    IMUData imu = getIMUData();
 
     xSemaphoreTake(mutex, portMAX_DELAY);
 
@@ -53,8 +59,68 @@ void Telemetry::updateInputs() {
     xSemaphoreGive(mutex);
 }
 
-void Telemetry::toJSON(char* buffer, size_t size) {
+void Telemetry::toJSON(char* buffer, size_t size)
+{
+    IMUData imu = getIMUData();
 
+    snprintf(buffer, size,
+        "{"
+        "\"temp\":%.1f,"
+        "\"bat\":%.2f,"
+
+        "\"gps\":{"
+        "\"fix\":%s,"
+        "\"lat\":%.6f,"
+        "\"lon\":%.6f,"
+        "\"speed\":%.1f,"
+        "\"course\":%.1f,"
+        "\"dir\":\"%s\","
+        "\"sats\":%d"
+        "},"
+
+        "\"imu\":{"
+        "\"roll\":%.2f,"
+        "\"pitch\":%.2f,"
+        "\"yaw\":%.2f,"
+        "\"alt\":%.2f,"
+        "\"pres\":%.2f"
+        "}"
+
+        "}",
+
+        temp,
+        bat,
+
+        gps.fix ? "true" : "false",
+        gps.lat,
+        gps.lon,
+        gps.speed,
+        gps.course,
+        courseToText(gps.course),
+        gps.sats,
+
+        imu.roll,
+        imu.pitch,
+        imu.yaw,
+        imu.altitude,
+        imu.pressure
+    );
+}
+
+void Telemetry::toJSONSystem(char* buffer, size_t size)
+{
+    snprintf(buffer, size,
+        "{"
+        "\"temp\":%.1f,"
+        "\"bat\":%.2f"
+        "}",
+        temp,
+        bat
+    );
+}
+
+void Telemetry::toJSONGPS(char* buffer, size_t size)
+{
     float outTemp;
     float outBat;
     GPSData outGps;
@@ -71,9 +137,6 @@ void Telemetry::toJSON(char* buffer, size_t size) {
 
         snprintf(buffer, size,
             "{"
-            "\"temp\":%.1f,"
-            "\"bat\":%.2f,"
-            "\"gps\":{"
             "\"fix\":true,"
             "\"lat\":%.6f,"
             "\"lon\":%.6f,"
@@ -81,10 +144,7 @@ void Telemetry::toJSON(char* buffer, size_t size) {
             "\"course\":%.1f,"
             "\"dir\":\"%s\","
             "\"sats\":%d"
-            "}"
             "}",
-            outTemp,
-            outBat,
             outGps.lat,
             outGps.lon,
             outGps.speed,
@@ -97,9 +157,6 @@ void Telemetry::toJSON(char* buffer, size_t size) {
 
         snprintf(buffer, size,
             "{"
-            "\"temp\":%.1f,"
-            "\"bat\":%.2f,"
-            "\"gps\":{"
             "\"fix\":false,"
             "\"lat\":null,"
             "\"lon\":null,"
@@ -107,11 +164,31 @@ void Telemetry::toJSON(char* buffer, size_t size) {
             "\"course\":0,"
             "\"dir\":\"---\","
             "\"sats\":%d"
-            "}"
             "}",
-            outTemp,
-            outBat,
             outGps.sats
         );
     }
+}
+
+void Telemetry::toJSONIMU(char* buffer, size_t size)
+{
+    IMUData imu = getIMUData();
+
+    snprintf(buffer, size,
+        "{"
+        "\"ok\":true,"
+        "\"roll\":%.2f,"
+        "\"pitch\":%.2f,"
+        "\"yaw\":%.2f,"
+        "\"alt\":%.2f,"
+        "\"pres\":%.2f,"
+        "\"temp\":%.2f"
+        "}",
+        imu.roll,
+        imu.pitch,
+        imu.yaw,
+        imu.altitude,
+        imu.pressure,
+        imu.temp
+    );
 }
