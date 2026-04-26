@@ -12,7 +12,7 @@ static void telemetryTask(void* param) {
 
         self->updateInputs();
 
-        vTaskDelay(pdMS_TO_TICKS(500));
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
 
@@ -24,8 +24,8 @@ Telemetry::Telemetry()
 
 void Telemetry::begin() {
 
-    initGPS(13, 12, 38400);
-    initIMU(15,14);
+    initGPS(13, 2, 38400);
+    initIMU(14,15);
 
     mutex = xSemaphoreCreateMutex();
 
@@ -46,9 +46,8 @@ void Telemetry::updateInputs() {
     float newBat  = 12.6f - (millis() % 500) / 1000.0f;
     
     GPSData newGps = getGPSData();
-
     updateIMU();
-    IMUData imu = getIMUData();
+    //IMUData imu = getIMUData();
 
     xSemaphoreTake(mutex, portMAX_DELAY);
 
@@ -88,7 +87,7 @@ void Telemetry::toJSON(char* buffer, size_t size)
 
         "}",
 
-        temp,
+        imu.temp,
         bat,
 
         gps.fix ? "true" : "false",
@@ -109,12 +108,14 @@ void Telemetry::toJSON(char* buffer, size_t size)
 
 void Telemetry::toJSONSystem(char* buffer, size_t size)
 {
+    IMUData imu = getIMUData();
+
     snprintf(buffer, size,
         "{"
         "\"temp\":%.1f,"
         "\"bat\":%.2f"
         "}",
-        temp,
+        imu.temp,
         bat
     );
 }

@@ -17,6 +17,8 @@ import threading
 import time
 import math
 
+from horizonte_widget import HorizonteWidget
+
 # ==========================================================
 # CONFIG
 # ==========================================================
@@ -32,7 +34,7 @@ MAP_HEIGHT = 280
 LEFT_PANEL_WIDTH = 280
 RIGHT_PANEL_WIDTH = 240
 
-TELEMETRY_INTERVAL_MS = 1000
+TELEMETRY_INTERVAL_MS = 500
 RECONNECT_DELAY = 2
 
 STREAM_ENDPOINT = "/stream"
@@ -311,6 +313,17 @@ class Visor:
 
         self.draw_compass(0)
 
+        Label(
+            right,
+            text="HORIZONTE",
+            bg=PANEL,
+            fg=ACCENT,
+            font=("Arial", 10, "bold")
+        ).pack(pady=(18, 5))
+
+        self.horizon = HorizonteWidget(right, 180, 180)
+        self.horizon.pack()
+
         self.root.bind(
             "<Escape>",
             self.close_tactical_mode
@@ -518,6 +531,15 @@ class Visor:
             self.draw_compass(
                 self.last_course
             )
+
+            imu = data.get("imu", {})
+
+            pitch = float(imu.get("pitch", 0))
+            roll = float(imu.get("roll", 0))
+
+            self.horizon.set_attitude(pitch, roll)
+
+          
 
         except:
             self.telemetry_display.configure(

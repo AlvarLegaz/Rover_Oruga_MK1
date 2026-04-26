@@ -116,8 +116,8 @@ void setCameraLowStreamMode()
     sensor_t* s = esp_camera_sensor_get();
     if (!s) return;
 
-    s->set_framesize(s, FRAMESIZE_QQVGA);   // 160x120
-    s->set_quality(s, 25);
+    s->set_framesize(s, FRAMESIZE_HQVGA);   // FRAMESIZE_QVGA: 320x240 FRAMESIZE_HQVGA 240x176
+    s->set_quality(s, 22);
 
     s->set_brightness(s, 0);
     s->set_contrast(s, 0);
@@ -145,8 +145,8 @@ void setCameraNormalMode()
     sensor_t* s = esp_camera_sensor_get();
     if (!s) return;
 
-    s->set_framesize(s, FRAMESIZE_QVGA);   // 320x240
-    s->set_quality(s, 18);
+    s->set_framesize(s, FRAMESIZE_HVGA);   // FRAMESIZE_HVGA: 480x320 FRAMESIZE_VGA: 640x480
+    s->set_quality(s, 20);
 
     s->set_saturation(s, 0);
     s->set_gainceiling(s, GAINCEILING_4X);

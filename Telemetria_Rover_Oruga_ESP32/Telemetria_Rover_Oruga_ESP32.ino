@@ -22,6 +22,7 @@ char apName[32];
 
 void setup() {
   // 1. Detección temprana de hardware
+  pinMode(0, INPUT_PULLUP); // Pone pullup interna en gpio 0
   bool forceAP = checkBootMode(); 
 
   // 2. Sistemas base
@@ -97,8 +98,10 @@ void startAPMode() {
   uint64_t chipid = ESP.getEfuseMac(); 
   sprintf(apName, "ROVER-%04X", (uint16_t)(chipid & 0xFFFF)); 
   useAPmode = true;
+
+  WiFi.setSleep(false);
   WiFi.softAPConfig(local_IP, gateway, subnet); 
-  WiFi.softAP(apName, "12345678");
+  WiFi.softAP(apName, "12345678", 6, false, 1);
   Serial.printf("Modo AP: %s | IP: 192.168.4.1\n", apName);
 }
 
