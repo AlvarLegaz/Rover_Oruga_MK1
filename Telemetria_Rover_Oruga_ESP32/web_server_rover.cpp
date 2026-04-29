@@ -146,24 +146,33 @@ void handleLightsOff() {
 // ==================================================
 
 void handleCapture() {
+    // Evita capturar mientras el stream está usando la cámara
+    if (streamingActive) {
+        server.send(503, "text/plain", "Camara ocupada: stream activo");
+        return;
+    }
 
-    if (!cameraSupported) {
-        server.send(503, "text/plain", "Camara no disponible");
+    // Protege el acceso a esp_camera_fb_get()
+    if (!xSemaphoreTake(camMutex, pdMS_TO_TICKS(1000))) {
+        server.send(503, "text/plain", "Camara ocupada");
         return;
     }
 
     camera_fb_t* fb = getCameraFrame();
 
     if (!fb) {
-        server.send(500, "text/plain", "Error Camara");
+        xSemaphoreGive(camMutex);
+        server.send(500, "text/plain", "Error capturando imagen");
         return;
     }
 
-    server.setContentLength(fb->len);
-    server.send(200, "image/jpeg", "");
-    server.sendContent((const char*)fb->buf, fb->len);
+    server.sendHeader("Content-Type", "image/jpeg");
+    server.sendHeader("Content-Disposition", "inline; filename=capture.jpg");
+    server.sendHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+    server.send_P(200, "image/jpeg", (const char*)fb->buf, fb->len);
 
     releaseCameraFrame(fb);
+    xSemaphoreGive(camMutex);
 }
 
 // ==================================================

@@ -142,11 +142,11 @@ void updateIMU()
 
         // Complementary filter
         roll =
-            0.1f * (roll + data.gx * dt) +
+            0.01f * (roll + data.gx * dt) +
             0.99f * accRoll;
 
         pitch =
-            0.1f * (pitch + data.gy * dt) +
+            0.01f * (pitch + data.gy * dt) +
             0.99f * accPitch;
 
         // Yaw SOLO gyro (relativo)

@@ -16,6 +16,9 @@ import requests
 import threading
 import time
 import math
+import subprocess
+import platform
+import re
 
 try:
     from horizonte_widget import HorizonteWidget
@@ -357,7 +360,16 @@ class Visor:
             bg=PANEL,
             fg=TEXT
         )
-        self.light_status.pack(pady=15)
+        self.light_status.pack(pady=(15, 4))
+
+        self.wifi_status = Label(
+            right,
+            text="WiFi AP: --",
+            bg=PANEL,
+            fg=ACCENT,
+            font=("Courier", 10, "bold")
+        )
+        self.wifi_status.pack(pady=(0, 15))
 
         Label(
             right,
@@ -393,6 +405,8 @@ class Visor:
             "<Escape>",
             self.close_tactical_mode
         )
+
+        self.update_wifi_signal_loop()
 
     # ==================================================
     # SELECTOR DE STREAM
@@ -1032,6 +1046,123 @@ class Visor:
             outline="#00ff00",
             width=2
         )
+
+    # ==================================================
+    # WIFI SIGNAL
+    # ==================================================
+
+    def update_wifi_signal_loop(self):
+
+        signal = self.get_wifi_signal_percent()
+
+        if signal is None:
+            self.wifi_status.configure(
+                text="WiFi AP: --",
+                fg=TEXT
+            )
+        else:
+            self.wifi_status.configure(
+                text=f"WiFi AP: {signal}%  {self.signal_bars(signal)}",
+                fg=ACCENT
+            )
+
+        self.root.after(
+            2000,
+            self.update_wifi_signal_loop
+        )
+
+    def signal_bars(self, signal):
+
+        if signal >= 80:
+            return "▂▄▆█"
+        elif signal >= 60:
+            return "▂▄▆_"
+        elif signal >= 40:
+            return "▂▄__"
+        elif signal >= 20:
+            return "▂___"
+        else:
+            return "____"
+
+    def get_wifi_signal_percent(self):
+
+        system = platform.system().lower()
+
+        try:
+            if "windows" in system:
+                return self.get_wifi_signal_windows()
+
+            if "linux" in system:
+                return self.get_wifi_signal_linux()
+
+            if "darwin" in system:
+                return self.get_wifi_signal_macos()
+
+        except Exception:
+            return None
+
+        return None
+
+    def get_wifi_signal_windows(self):
+
+        output = subprocess.check_output(
+            ["netsh", "wlan", "show", "interfaces"],
+            encoding="utf-8",
+            errors="ignore"
+        )
+
+        match = re.search(r"Signal\s*:\s*(\d+)%", output)
+
+        if not match:
+            return None
+
+        return int(match.group(1))
+
+    def get_wifi_signal_linux(self):
+
+        output = subprocess.check_output(
+            ["iwconfig"],
+            encoding="utf-8",
+            errors="ignore"
+        )
+
+        match = re.search(r"Link Quality=(\d+)/(\d+)", output)
+
+        if match:
+            current = int(match.group(1))
+            maximum = int(match.group(2))
+
+            if maximum > 0:
+                return int((current / maximum) * 100)
+
+        return None
+
+    def get_wifi_signal_macos(self):
+
+        airport = (
+            "/System/Library/PrivateFrameworks/"
+            "Apple80211.framework/Versions/Current/Resources/airport"
+        )
+
+        output = subprocess.check_output(
+            [airport, "-I"],
+            encoding="utf-8",
+            errors="ignore"
+        )
+
+        match = re.search(r"agrCtlRSSI:\s*(-?\d+)", output)
+
+        if not match:
+            return None
+
+        rssi = int(match.group(1))
+
+        # Conversion aproximada RSSI -> %
+        # -90 dBm muy debil, -30 dBm excelente
+        signal = int(2 * (rssi + 100))
+        signal = max(0, min(100, signal))
+
+        return signal
 
     # ==================================================
     # LUCES
