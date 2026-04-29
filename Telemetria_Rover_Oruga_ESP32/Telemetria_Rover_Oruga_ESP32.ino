@@ -12,6 +12,7 @@ bool cameraSupported = false;
 bool useAPmode = false;
 
 // Configuración IP para Modo AP
+const int wifi_channel = 1;
 IPAddress local_IP(192, 168, 4, 1);
 IPAddress gateway(192, 168, 4, 1);
 IPAddress subnet(255, 255, 255, 0);
@@ -101,7 +102,7 @@ void startAPMode() {
 
   WiFi.setSleep(false);
   WiFi.softAPConfig(local_IP, gateway, subnet); 
-  WiFi.softAP(apName, "12345678", 6, false, 1);
+  WiFi.softAP(apName, "12345678", wifi_channel, false, 1);
   Serial.printf("Modo AP: %s | IP: 192.168.4.1\n", apName);
 }
 

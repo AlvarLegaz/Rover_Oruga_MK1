@@ -4,6 +4,8 @@
 #include "freertos/task.h"
 #include "imu.h"
 
+#define TELEMETRY_INTERVAL_MS 1000 
+
 static void telemetryTask(void* param) {
 
     Telemetry* self = static_cast<Telemetry*>(param);
@@ -12,7 +14,7 @@ static void telemetryTask(void* param) {
 
         self->updateInputs();
 
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        vTaskDelay(pdMS_TO_TICKS(TELEMETRY_INTERVAL_MS));
     }
 }
 

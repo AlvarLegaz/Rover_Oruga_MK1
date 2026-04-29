@@ -117,7 +117,7 @@ void setCameraLowStreamMode()
     if (!s) return;
 
     s->set_framesize(s, FRAMESIZE_HQVGA);   // FRAMESIZE_QVGA: 320x240 FRAMESIZE_HQVGA 240x176
-    s->set_quality(s, 22);
+    s->set_quality(s, 20);
 
     s->set_brightness(s, 0);
     s->set_contrast(s, 0);

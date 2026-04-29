@@ -28,8 +28,9 @@ enum CameraMode {
 };
 
 const int web_port       = 80;
+
 const int targetFPS_high = 10;
-const int targetFPS_low  = 20;
+const int targetFPS_low  = 8;
 
 extern Preferences preferences;
 
@@ -96,20 +97,10 @@ void handleInfo() {
 // API JSON
 // ==================================================
 
-void handleTelemetry() {
-
-    xSemaphoreTake(camMutex, portMAX_DELAY);
-
-    if (!streamingHighActive) {
-        ensureCameraMode(CAM_LOW);
-    }
-
-    xSemaphoreGive(camMutex);
-
+void handleTelemetry() 
+{
     char json[420];
-
     telemetry.toJSON(json, sizeof(json));
-
     server.send(200, "application/json", json);
 }
 
