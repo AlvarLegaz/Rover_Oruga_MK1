@@ -186,24 +186,41 @@ void handleStream() {
         return;
     }
 
+    if (camMutex == nullptr) {
+        server.send(500, "text/plain", "Mutex camara no inicializado");
+        return;
+    }
+
     if (streamingActive) {
         server.send(503, "text/plain", "Stream ocupado");
         return;
     }
 
-    streamingActive = true;
-
     WiFiClient client = server.client();
+
+    if (!client || !client.connected()) {
+        server.send(400, "text/plain", "Cliente no conectado");
+        return;
+    }
+
+    streamingActive = true;
 
     client.println("HTTP/1.1 200 OK");
     client.println("Content-Type: multipart/x-mixed-replace; boundary=frame");
-    client.println("Cache-Control: no-cache");
+    client.println("Cache-Control: no-cache, no-store, must-revalidate");
+    client.println("Pragma: no-cache");
     client.println("Connection: close");
     client.println();
 
     WiFiClient* clientCopy = new WiFiClient(client);
 
-    xTaskCreatePinnedToCore(
+    if (clientCopy == nullptr) {
+        streamingActive = false;
+        client.stop();
+        return;
+    }
+
+    BaseType_t ok = xTaskCreatePinnedToCore(
         streamTask,
         "streamTask",
         8192,
@@ -212,6 +229,13 @@ void handleStream() {
         nullptr,
         1
     );
+
+    if (ok != pdPASS) {
+        delete clientCopy;
+        streamingActive = false;
+        client.stop();
+        return;
+    }
 }
 
 static void streamTask(void* param) {
@@ -221,67 +245,105 @@ static void streamTask(void* param) {
 
     streamingHighActive = true;
 
-    xSemaphoreTake(camMutex, portMAX_DELAY);
-    ensureCameraMode(CAM_HIGH);
-    xSemaphoreGive(camMutex);
-
     const int frameInterval = 1000 / targetFPS_high;
 
-    unsigned long lastFrameTime      = 0;
-    unsigned long lastClientActivity = millis();
-    const unsigned long timeoutMs    = 10000;
+    const unsigned long noWriteTimeoutMs = 5000;
+    const unsigned long maxStreamTimeMs  = 10UL * 60UL * 1000UL;
+
+    unsigned long streamStartTime = millis();
+    unsigned long lastFrameTime   = 0;
+    unsigned long lastGoodWrite   = millis();
+
+    // Cambia a modo HIGH protegido por mutex
+    if (xSemaphoreTake(camMutex, pdMS_TO_TICKS(1000))) {
+        ensureCameraMode(CAM_HIGH);
+        xSemaphoreGive(camMutex);
+    } else {
+        goto cleanup;
+    }
 
     while (client.connected()) {
 
-        if (millis() - lastClientActivity > timeoutMs) {
+        unsigned long now = millis();
+
+        // Si el stream dura demasiado, se corta para evitar estados zombies
+        if (now - streamStartTime > maxStreamTimeMs) {
             break;
         }
 
-        unsigned long now = millis();
+        // Si no se consigue escribir nada útil durante varios segundos, salir
+        if (now - lastGoodWrite > noWriteTimeoutMs) {
+            break;
+        }
 
-        if (now - lastFrameTime < frameInterval) {
-            vTaskDelay(1);
+        // Limitador FPS
+        if (now - lastFrameTime < (unsigned long)frameInterval) {
+            vTaskDelay(pdMS_TO_TICKS(2));
             continue;
         }
 
-        if (xSemaphoreTake(camMutex, pdMS_TO_TICKS(100))) {
+        lastFrameTime = now;
 
-            camera_fb_t* fb = getCameraFrame();
+        camera_fb_t* fb = nullptr;
 
-            if (fb) {
-
-                client.println("--frame");
-                client.println("Content-Type: image/jpeg");
-                client.print("Content-Length: ");
-                client.println(fb->len);
-                client.println();
-
-                size_t written = client.write(fb->buf, fb->len);
-                client.println();
-
-                releaseCameraFrame(fb);
-
-                if (written > 0) {
-                    lastClientActivity = millis();
-                    lastFrameTime = now;
-                } else {
-                    xSemaphoreGive(camMutex);
-                    break;
-                }
-            }
-
-            xSemaphoreGive(camMutex);
+        if (!xSemaphoreTake(camMutex, pdMS_TO_TICKS(250))) {
+            vTaskDelay(pdMS_TO_TICKS(5));
+            continue;
         }
 
-        vTaskDelay(2);
+        fb = getCameraFrame();
+
+        if (!fb) {
+            xSemaphoreGive(camMutex);
+            vTaskDelay(pdMS_TO_TICKS(20));
+            continue;
+        }
+
+        bool ok = true;
+
+        ok = ok && client.connected();
+        ok = ok && client.print("--frame\r\n");
+        ok = ok && client.print("Content-Type: image/jpeg\r\n");
+        ok = ok && client.print("Content-Length: ");
+        ok = ok && client.print(fb->len);
+        ok = ok && client.print("\r\n\r\n");
+
+        size_t written = 0;
+
+        if (ok && client.connected()) {
+            written = client.write(fb->buf, fb->len);
+        }
+
+        ok = ok && (written == fb->len);
+
+        if (ok && client.connected()) {
+            ok = ok && client.print("\r\n");
+        }
+
+        releaseCameraFrame(fb);
+        xSemaphoreGive(camMutex);
+
+        if (!ok) {
+            break;
+        }
+
+        lastGoodWrite = millis();
+
+        vTaskDelay(pdMS_TO_TICKS(2));
     }
+
+cleanup:
 
     client.stop();
 
-    xSemaphoreTake(camMutex, portMAX_DELAY);
-    streamingHighActive = false;
-    ensureCameraMode(CAM_LOW);
-    xSemaphoreGive(camMutex);
+    // Limpieza garantizada del estado de cámara/stream
+    if (camMutex != nullptr && xSemaphoreTake(camMutex, pdMS_TO_TICKS(1000))) {
+        streamingHighActive = false;
+        ensureCameraMode(CAM_LOW);
+        xSemaphoreGive(camMutex);
+    } else {
+        streamingHighActive = false;
+    }
 
     streamingActive = false;
 
@@ -299,24 +361,41 @@ void handleStreamLow() {
         return;
     }
 
+    if (camMutex == nullptr) {
+        server.send(500, "text/plain", "Mutex camara no inicializado");
+        return;
+    }
+
     if (streamingActive) {
         server.send(503, "text/plain", "Stream ocupado");
         return;
     }
 
-    streamingActive = true;
-
     WiFiClient client = server.client();
+
+    if (!client || !client.connected()) {
+        server.send(400, "text/plain", "Cliente no conectado");
+        return;
+    }
+
+    streamingActive = true;
 
     client.println("HTTP/1.1 200 OK");
     client.println("Content-Type: multipart/x-mixed-replace; boundary=frame");
-    client.println("Cache-Control: no-cache");
+    client.println("Cache-Control: no-cache, no-store, must-revalidate");
+    client.println("Pragma: no-cache");
     client.println("Connection: close");
     client.println();
 
     WiFiClient* clientCopy = new WiFiClient(client);
 
-    xTaskCreatePinnedToCore(
+    if (clientCopy == nullptr) {
+        streamingActive = false;
+        client.stop();
+        return;
+    }
+
+    BaseType_t ok = xTaskCreatePinnedToCore(
         streamLowTask,
         "streamLowTask",
         8192,
@@ -325,6 +404,13 @@ void handleStreamLow() {
         nullptr,
         1
     );
+
+    if (ok != pdPASS) {
+        delete clientCopy;
+        streamingActive = false;
+        client.stop();
+        return;
+    }
 }
 
 static void streamLowTask(void* param) {
@@ -332,60 +418,91 @@ static void streamLowTask(void* param) {
     WiFiClient client = *((WiFiClient*)param);
     delete (WiFiClient*)param;
 
-    xSemaphoreTake(camMutex, portMAX_DELAY);
-    ensureCameraMode(CAM_LOW);
-    xSemaphoreGive(camMutex);
-
     const int frameInterval = 1000 / targetFPS_low;
 
-    unsigned long lastFrameTime      = 0;
-    unsigned long lastClientActivity = millis();
-    const unsigned long timeoutMs    = 10000;
+    const unsigned long noWriteTimeoutMs = 5000;
+    const unsigned long maxStreamTimeMs  = 10UL * 60UL * 1000UL;
+
+    unsigned long streamStartTime = millis();
+    unsigned long lastFrameTime   = 0;
+    unsigned long lastGoodWrite   = millis();
+
+    // Asegura modo LOW protegido por mutex
+    if (xSemaphoreTake(camMutex, pdMS_TO_TICKS(1000))) {
+        ensureCameraMode(CAM_LOW);
+        xSemaphoreGive(camMutex);
+    } else {
+        goto cleanup;
+    }
 
     while (client.connected()) {
 
-        if (millis() - lastClientActivity > timeoutMs) {
+        unsigned long now = millis();
+
+        if (now - streamStartTime > maxStreamTimeMs) {
             break;
         }
 
-        unsigned long now = millis();
+        if (now - lastGoodWrite > noWriteTimeoutMs) {
+            break;
+        }
 
-        if (now - lastFrameTime < frameInterval) {
-            vTaskDelay(1);
+        if (now - lastFrameTime < (unsigned long)frameInterval) {
+            vTaskDelay(pdMS_TO_TICKS(2));
             continue;
         }
 
-        if (xSemaphoreTake(camMutex, pdMS_TO_TICKS(100))) {
+        lastFrameTime = now;
 
-            camera_fb_t* fb = getCameraFrame();
+        camera_fb_t* fb = nullptr;
 
-            if (fb) {
-
-                client.println("--frame");
-                client.println("Content-Type: image/jpeg");
-                client.print("Content-Length: ");
-                client.println(fb->len);
-                client.println();
-
-                size_t written = client.write(fb->buf, fb->len);
-                client.println();
-
-                releaseCameraFrame(fb);
-
-                if (written > 0) {
-                    lastClientActivity = millis();
-                    lastFrameTime = now;
-                } else {
-                    xSemaphoreGive(camMutex);
-                    break;
-                }
-            }
-
-            xSemaphoreGive(camMutex);
+        if (!xSemaphoreTake(camMutex, pdMS_TO_TICKS(250))) {
+            vTaskDelay(pdMS_TO_TICKS(5));
+            continue;
         }
 
-        vTaskDelay(2);
+        fb = getCameraFrame();
+
+        if (!fb) {
+            xSemaphoreGive(camMutex);
+            vTaskDelay(pdMS_TO_TICKS(20));
+            continue;
+        }
+
+        bool ok = true;
+
+        ok = ok && client.connected();
+        ok = ok && client.print("--frame\r\n");
+        ok = ok && client.print("Content-Type: image/jpeg\r\n");
+        ok = ok && client.print("Content-Length: ");
+        ok = ok && client.print(fb->len);
+        ok = ok && client.print("\r\n\r\n");
+
+        size_t written = 0;
+
+        if (ok && client.connected()) {
+            written = client.write(fb->buf, fb->len);
+        }
+
+        ok = ok && (written == fb->len);
+
+        if (ok && client.connected()) {
+            ok = ok && client.print("\r\n");
+        }
+
+        releaseCameraFrame(fb);
+        xSemaphoreGive(camMutex);
+
+        if (!ok) {
+            break;
+        }
+
+        lastGoodWrite = millis();
+
+        vTaskDelay(pdMS_TO_TICKS(2));
     }
+
+cleanup:
 
     client.stop();
 
