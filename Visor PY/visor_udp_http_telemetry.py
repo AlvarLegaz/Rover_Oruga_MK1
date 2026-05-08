@@ -14,6 +14,9 @@ from io import BytesIO
 
 import requests
 import threading
+import socket
+import struct
+import json
 import time
 import math
 import subprocess
@@ -55,11 +58,24 @@ LEFT_PANEL_WIDTH = 280
 RIGHT_PANEL_WIDTH = 240
 
 TELEMETRY_INTERVAL_MS = 1000
-RECONNECT_DELAY = 2
+RECONNECT_DELAY = 0.5
 FPS_AVG_WINDOW_SEC = 2.0
 
 STREAM_ENDPOINT = "/stream"
 TELEMETRY_ENDPOINT = "/telemetry"
+
+UDP_START_ENDPOINT = "/udp/start"
+UDP_STOP_ENDPOINT = "/udp/stop"
+UDP_PING_ENDPOINT = "/udp/ping"
+UDP_VIDEO_PORT = 5000
+UDP_TELEMETRY_PORT = 5001
+UDP_MAGIC = 0x5256
+UDP_HEADER_FORMAT = "<HHHHH"
+UDP_HEADER_SIZE = struct.calcsize(UDP_HEADER_FORMAT)
+UDP_FRAME_TIMEOUT_SEC = 0.35
+UDP_SOCKET_TIMEOUT_SEC = 1.0
+UDP_PING_INTERVAL_SEC = 1.0
+UDP_TELEMETRY_SOCKET_TIMEOUT_SEC = 1.0
 
 # Opciones del desplegable del visor.
 # Cambia los endpoints si en tu firmware usan otros nombres.
@@ -69,6 +85,9 @@ STREAM_OPTIONS = {
     "HIGH / calidad": "/stream",
 }
 DEFAULT_STREAM_MODE = "LOW / estable"
+
+TRANSPORT_OPTIONS = ("HTTP", "UDP")
+DEFAULT_VIDEO_TRANSPORT = "HTTP"
 
 LIGHT_ON_ENDPOINT = "/luces/on"
 LIGHT_OFF_ENDPOINT = "/luces/off"
@@ -98,8 +117,14 @@ class Visor:
         self.running = False
         self.stream_thread = None
         self.stream_session = requests.Session()
+        self.udp_socket = None
+        self.udp_telemetry_socket = None
+        self.udp_ping_thread = None
+        self.udp_telemetry_thread = None
+        self.last_udp_telemetry_time = 0.0
 
         self.stream_mode = StringVar(value=DEFAULT_STREAM_MODE)
+        self.video_transport = StringVar(value=DEFAULT_VIDEO_TRANSPORT)
         self.active_stream_endpoint = STREAM_OPTIONS[DEFAULT_STREAM_MODE]
 
         self.last_frame_time = 0
@@ -159,6 +184,27 @@ class Visor:
         )
         stream_menu["menu"].configure(bg=PANEL, fg=TEXT)
         stream_menu.pack(side=tk.LEFT, padx=5)
+
+        Label(top, text="Transporte:", bg=BG, fg=TEXT).pack(
+            side=tk.LEFT, padx=(12, 5)
+        )
+
+        transport_menu = OptionMenu(
+            top,
+            self.video_transport,
+            *TRANSPORT_OPTIONS,
+            command=self.change_video_transport
+        )
+        transport_menu.configure(
+            width=7,
+            bg=PANEL,
+            fg=TEXT,
+            activebackground=PANEL,
+            activeforeground=ACCENT,
+            highlightthickness=0
+        )
+        transport_menu["menu"].configure(bg=PANEL, fg=TEXT)
+        transport_menu.pack(side=tk.LEFT, padx=5)
 
         Button(
             top,
@@ -412,6 +458,28 @@ class Visor:
     # SELECTOR DE STREAM
     # ==================================================
 
+    def change_video_transport(self, selected_transport):
+
+        if selected_transport not in TRANSPORT_OPTIONS:
+            selected_transport = DEFAULT_VIDEO_TRANSPORT
+            self.video_transport.set(selected_transport)
+
+        was_running = self.running
+
+        if was_running:
+            self.stop_video_stream(wait_for_thread=True)
+
+        self.last_frame_time = 0
+        self.reset_fps_stats()
+
+        self.image_label.configure(
+            image="",
+            text=f"Video seleccionado: {selected_transport}"
+        )
+
+        if was_running:
+            self.root.after(600, self.start_all)
+
     def change_stream_mode(self, selected_mode):
 
         new_endpoint = STREAM_OPTIONS.get(
@@ -424,15 +492,10 @@ class Visor:
 
         was_running = self.running
 
-        # Al cambiar de stream, primero hacemos exactamente lo mismo que
-        # al pulsar el botón Parar, pero solo en el visor: cerrar sesión
-        # HTTP local y detener el hilo, sin llamar a endpoints extra del ESP32.
+        # Al cambiar de stream, cerramos primero el enlace de vídeo activo
+        # y esperamos a que el hilo salga antes de abrir el nuevo endpoint.
         if was_running:
-            self.stop_all()
-
-            # Da tiempo al hilo de vídeo a salir de iter_content() antes
-            # de abrir el nuevo endpoint.
-            time.sleep(0.20)
+            self.stop_video_stream(wait_for_thread=True)
 
         self.active_stream_endpoint = new_endpoint
         self.last_frame_time = 0
@@ -440,13 +503,18 @@ class Visor:
 
         self.image_label.configure(
             image="",
-            text=f"Stream seleccionado: {selected_mode}"
+            text=f"Cambiando a {selected_mode}..."
         )
 
-        # Si el visor estaba activo antes del cambio, arrancamos de nuevo
-        # con el endpoint recién seleccionado.
+        # Si el visor estaba activo antes del cambio, reiniciamos con un
+        # pequeño margen para que el ESP32 libere streamingActive.
         if was_running:
-            self.start_all()
+            self.root.after(600, self.start_all)
+        else:
+            self.image_label.configure(
+                image="",
+                text=f"Stream seleccionado: {selected_mode}"
+            )
 
     # ==================================================
     # START / STOP
@@ -471,7 +539,7 @@ class Visor:
 
         self.update_telemetry_loop()
 
-    def stop_all(self):
+    def stop_video_stream(self, wait_for_thread=False):
 
         self.running = False
 
@@ -479,6 +547,59 @@ class Visor:
             self.stream_session.close()
         except Exception:
             pass
+
+        try:
+            if self.udp_socket:
+                self.udp_socket.close()
+        except Exception:
+            pass
+
+        try:
+            if self.udp_telemetry_socket:
+                self.udp_telemetry_socket.close()
+        except Exception:
+            pass
+
+        if self.udp_socket is not None or self.video_transport.get() == "UDP":
+            try:
+                ip = self.ip_entry.get().strip()
+                requests.get(f"http://{ip}{UDP_STOP_ENDPOINT}", timeout=0.5)
+            except Exception:
+                pass
+
+        if (
+            wait_for_thread
+            and self.stream_thread
+            and self.stream_thread.is_alive()
+            and threading.current_thread() is not self.stream_thread
+        ):
+            self.stream_thread.join(timeout=1.0)
+
+        if (
+            wait_for_thread
+            and self.udp_ping_thread
+            and self.udp_ping_thread.is_alive()
+            and threading.current_thread() is not self.udp_ping_thread
+        ):
+            self.udp_ping_thread.join(timeout=0.5)
+
+        if (
+            wait_for_thread
+            and self.udp_telemetry_thread
+            and self.udp_telemetry_thread.is_alive()
+            and threading.current_thread() is not self.udp_telemetry_thread
+        ):
+            self.udp_telemetry_thread.join(timeout=0.5)
+
+        self.stream_thread = None
+        self.udp_ping_thread = None
+        self.udp_telemetry_thread = None
+        self.udp_socket = None
+        self.udp_telemetry_socket = None
+
+    def stop_all(self):
+
+        self.stop_video_stream(wait_for_thread=True)
 
         self.reset_fps_stats()
 
@@ -537,6 +658,13 @@ class Visor:
     # ==================================================
 
     def stream_worker(self):
+
+        if self.video_transport.get() == "UDP":
+            self.udp_stream_worker()
+        else:
+            self.http_stream_worker()
+
+    def http_stream_worker(self):
 
         while self.running:
 
@@ -612,7 +740,16 @@ class Visor:
                         except:
                             pass
 
-            except:
+            except Exception as e:
+                if self.running:
+                    self.root.after(
+                        0,
+                        self.image_label.configure,
+                        {
+                            "image": "",
+                            "text": f"Reconectando video...\n{type(e).__name__}"
+                        }
+                    )
                 time.sleep(RECONNECT_DELAY)
 
             finally:
@@ -621,6 +758,206 @@ class Visor:
                         response.close()
                 except:
                     pass
+
+    def udp_ping_worker(self):
+
+        while self.running and self.video_transport.get() == "UDP":
+
+            ip = self.ip_entry.get().strip()
+
+            try:
+                requests.get(
+                    f"http://{ip}{UDP_PING_ENDPOINT}",
+                    timeout=0.3
+                )
+            except Exception:
+                pass
+
+            # Sueño troceado para poder salir rápido al pulsar Parar.
+            end_time = time.time() + UDP_PING_INTERVAL_SEC
+
+            while time.time() < end_time:
+                if not self.running or self.video_transport.get() != "UDP":
+                    return
+                time.sleep(0.05)
+
+    def udp_stream_worker(self):
+
+        ip = self.ip_entry.get().strip()
+        selected_mode = self.stream_mode.get()
+        mode = "high" if STREAM_OPTIONS.get(selected_mode) == "/stream" else "low"
+
+        sock = None
+
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind(("0.0.0.0", UDP_VIDEO_PORT))
+            sock.settimeout(UDP_SOCKET_TIMEOUT_SEC)
+            self.udp_socket = sock
+
+            start_url = (
+                f"http://{ip}{UDP_START_ENDPOINT}"
+                f"?port={UDP_VIDEO_PORT}&mode={mode}"
+                f"&telemetry_port={UDP_TELEMETRY_PORT}"
+            )
+
+            with requests.get(start_url, timeout=2) as r:
+                r.raise_for_status()
+
+            self.udp_ping_thread = threading.Thread(
+                target=self.udp_ping_worker,
+                daemon=True
+            )
+            self.udp_ping_thread.start()
+
+            self.udp_telemetry_thread = threading.Thread(
+                target=self.udp_telemetry_worker,
+                daemon=True
+            )
+            self.udp_telemetry_thread.start()
+
+            self.root.after(
+                0,
+                self.image_label.configure,
+                {
+                    "image": "",
+                    "text": f"UDP activo video:{UDP_VIDEO_PORT} telemetria:{UDP_TELEMETRY_PORT} ({mode})"
+                }
+            )
+
+            frames = {}
+
+            while self.running and self.video_transport.get() == "UDP":
+
+                now = time.time()
+
+                # Limpia frames incompletos antiguos.
+                old_frame_ids = [
+                    frame_id for frame_id, frame in frames.items()
+                    if now - frame["time"] > UDP_FRAME_TIMEOUT_SEC
+                ]
+
+                for frame_id in old_frame_ids:
+                    frames.pop(frame_id, None)
+
+                try:
+                    packet, _addr = sock.recvfrom(1500)
+                except socket.timeout:
+                    continue
+                except OSError:
+                    break
+
+                if len(packet) <= UDP_HEADER_SIZE:
+                    continue
+
+                try:
+                    magic, frame_id, packet_index, packet_count, payload_size = struct.unpack(
+                        UDP_HEADER_FORMAT,
+                        packet[:UDP_HEADER_SIZE]
+                    )
+                except struct.error:
+                    continue
+
+                if magic != UDP_MAGIC:
+                    continue
+
+                payload = packet[UDP_HEADER_SIZE:UDP_HEADER_SIZE + payload_size]
+
+                if packet_count <= 0 or packet_index >= packet_count:
+                    continue
+
+                if len(payload) != payload_size:
+                    continue
+
+                frame = frames.get(frame_id)
+
+                if frame is None or frame["count"] != packet_count:
+                    frame = {
+                        "count": packet_count,
+                        "parts": {},
+                        "time": now,
+                    }
+                    frames[frame_id] = frame
+
+                frame["parts"][packet_index] = payload
+                frame["time"] = now
+
+                if len(frame["parts"]) != frame["count"]:
+                    continue
+
+                try:
+                    jpg = b"".join(
+                        frame["parts"][i]
+                        for i in range(frame["count"])
+                    )
+                except KeyError:
+                    frames.pop(frame_id, None)
+                    continue
+
+                frames.pop(frame_id, None)
+
+                # Cuenta frames JPEG completos recibidos del rover,
+                # aunque luego el limitador local descarte alguno.
+                self.register_received_frame()
+
+                now = time.time()
+
+                # Limitador FPS local.
+                if now - self.last_frame_time < (1 / self.max_fps):
+                    continue
+
+                self.last_frame_time = now
+
+                try:
+                    img = Image.open(BytesIO(jpg))
+                    img = img.convert("RGB")
+                    img = img.resize(
+                        (STREAM_WIDTH, STREAM_HEIGHT),
+                        Image.Resampling.LANCZOS
+                    )
+
+                    self.root.after(
+                        0,
+                        self.show_stream_image,
+                        img
+                    )
+
+                except Exception:
+                    pass
+
+        except Exception as e:
+            if self.running:
+                self.root.after(
+                    0,
+                    self.image_label.configure,
+                    {
+                        "image": "",
+                        "text": f"Reconectando UDP...\n{type(e).__name__}"
+                    }
+                )
+            time.sleep(RECONNECT_DELAY)
+
+        finally:
+            try:
+                requests.get(f"http://{ip}{UDP_STOP_ENDPOINT}", timeout=1)
+            except Exception:
+                pass
+
+            try:
+                if sock:
+                    sock.close()
+            except Exception:
+                pass
+
+            try:
+                if self.udp_telemetry_socket:
+                    self.udp_telemetry_socket.close()
+            except Exception:
+                pass
+
+            self.udp_socket = None
+            self.udp_telemetry_socket = None
 
     # ==================================================
     # FRAME
@@ -693,6 +1030,82 @@ class Visor:
             except tk.TclError:
                 self.close_tactical_mode()
 
+    def apply_telemetry_data(self, data):
+
+        self.telemetry_display.configure(
+            text=self.format_dict(data)
+        )
+
+        gps = data.get("gps", {})
+        imu = data.get("imu", {})
+
+        self.last_course = float(gps.get("course", self.last_course or 0))
+
+        lat = gps.get("lat")
+        lon = gps.get("lon")
+
+        if lat is not None and lon is not None:
+
+            self.last_lat = float(lat)
+            self.last_lon = float(lon)
+
+            self.update_map(
+                self.last_lat,
+                self.last_lon
+            )
+
+        self.draw_compass(
+            self.last_course
+        )
+
+        pitch = float(imu.get("pitch", 0))
+        roll = float(imu.get("roll", 0))
+
+        self.horizon.set_attitude(pitch, roll)
+
+    def udp_telemetry_worker(self):
+
+        sock = None
+
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind(("0.0.0.0", UDP_TELEMETRY_PORT))
+            sock.settimeout(UDP_TELEMETRY_SOCKET_TIMEOUT_SEC)
+            self.udp_telemetry_socket = sock
+
+            while self.running and self.video_transport.get() == "UDP":
+
+                try:
+                    packet, _addr = sock.recvfrom(2048)
+                except socket.timeout:
+                    if time.time() - self.last_udp_telemetry_time > 3.0:
+                        self.root.after(
+                            0,
+                            self.telemetry_display.configure,
+                            {"text": "Telemetria UDP offline"}
+                        )
+                    continue
+                except OSError:
+                    break
+
+                try:
+                    data = json.loads(packet.decode("utf-8", errors="ignore"))
+                except Exception:
+                    continue
+
+                self.last_udp_telemetry_time = time.time()
+                self.root.after(0, self.apply_telemetry_data, data)
+
+        finally:
+            try:
+                if sock:
+                    sock.close()
+            except Exception:
+                pass
+
+            self.udp_telemetry_socket = None
+
     # ==================================================
     # TELEMETRY
     # ==================================================
@@ -700,6 +1113,15 @@ class Visor:
     def update_telemetry_loop(self):
 
         if not self.running:
+            return
+
+        # Si el transporte de video es UDP, la telemetria tambien llega por UDP.
+        # No hacemos polling HTTP para no meter ruido en el servidor del ESP32.
+        if self.video_transport.get() == "UDP":
+            self.root.after(
+                TELEMETRY_INTERVAL_MS,
+                self.update_telemetry_loop
+            )
             return
 
         ip = self.ip_entry.get().strip()
@@ -710,37 +1132,7 @@ class Visor:
                 r.raise_for_status()
                 data = r.json()
 
-            self.telemetry_display.configure(
-                text=self.format_dict(data)
-            )
-
-            gps = data.get("gps", {})
-            imu = data.get("imu", {})
-
-            # Actualiza rumbo antes de dibujar mapa/grid para evitar un frame atrasado.
-            self.last_course = float(gps.get("course", self.last_course or 0))
-
-            lat = gps.get("lat")
-            lon = gps.get("lon")
-
-            if lat is not None and lon is not None:
-
-                self.last_lat = float(lat)
-                self.last_lon = float(lon)
-
-                self.update_map(
-                    self.last_lat,
-                    self.last_lon
-                )
-
-            self.draw_compass(
-                self.last_course
-            )
-
-            pitch = float(imu.get("pitch", 0))
-            roll = float(imu.get("roll", 0))
-
-            self.horizon.set_attitude(pitch, roll)
+            self.apply_telemetry_data(data)
 
         except Exception as e:
             self.telemetry_display.configure(
@@ -1195,6 +1587,30 @@ class Visor:
 
         try:
             self.stream_session.close()
+        except Exception:
+            pass
+
+        try:
+            if self.udp_socket:
+                self.udp_socket.close()
+        except Exception:
+            pass
+
+        try:
+            if self.udp_telemetry_socket:
+                self.udp_telemetry_socket.close()
+        except Exception:
+            pass
+
+        try:
+            ip = self.ip_entry.get().strip()
+            requests.get(f"http://{ip}{UDP_STOP_ENDPOINT}", timeout=1)
+        except Exception:
+            pass
+
+        try:
+            if self.udp_ping_thread and self.udp_ping_thread.is_alive():
+                self.udp_ping_thread.join(timeout=0.5)
         except Exception:
             pass
 

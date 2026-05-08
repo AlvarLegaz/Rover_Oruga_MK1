@@ -6,6 +6,25 @@
 
 #define TELEMETRY_INTERVAL_MS 1000 
 
+static void formatUptime(unsigned long uptimeMs, char* out, size_t outSize) {
+
+    unsigned long totalSeconds = uptimeMs / 1000UL;
+    unsigned long seconds = totalSeconds % 60UL;
+    unsigned long minutes = (totalSeconds / 60UL) % 60UL;
+    unsigned long hours = (totalSeconds / 3600UL) % 24UL;
+    unsigned long days = totalSeconds / 86400UL;
+
+    snprintf(
+        out,
+        outSize,
+        "%lud %02lu:%02lu:%02lu",
+        days,
+        hours,
+        minutes,
+        seconds
+    );
+}
+
 static void telemetryTask(void* param) {
 
     Telemetry* self = static_cast<Telemetry*>(param);
@@ -64,10 +83,17 @@ void Telemetry::toJSON(char* buffer, size_t size)
 {
     IMUData imu = getIMUData();
 
+    unsigned long uptimeMs = millis();
+    unsigned long uptimeS = uptimeMs / 1000UL;
+    char uptimeText[24];
+    formatUptime(uptimeMs, uptimeText, sizeof(uptimeText));
+
     snprintf(buffer, size,
         "{"
         "\"temp\":%.1f,"
         "\"bat\":%.2f,"
+
+        "\"uptime\":\"%s\","
 
         "\"gps\":{"
         "\"fix\":%s,"
@@ -91,6 +117,7 @@ void Telemetry::toJSON(char* buffer, size_t size)
 
         imu.temp,
         bat,
+        uptimeText,
 
         gps.fix ? "true" : "false",
         gps.lat,
@@ -112,13 +139,20 @@ void Telemetry::toJSONSystem(char* buffer, size_t size)
 {
     IMUData imu = getIMUData();
 
+    unsigned long uptimeMs = millis();
+    unsigned long uptimeS = uptimeMs / 1000UL;
+    char uptimeText[24];
+    formatUptime(uptimeMs, uptimeText, sizeof(uptimeText));
+
     snprintf(buffer, size,
         "{"
         "\"temp\":%.1f,"
-        "\"bat\":%.2f"
+        "\"bat\":%.2f,"
+        "\"uptime\":\"%s\""
         "}",
         imu.temp,
-        bat
+        bat,
+        uptimeText
     );
 }
 
