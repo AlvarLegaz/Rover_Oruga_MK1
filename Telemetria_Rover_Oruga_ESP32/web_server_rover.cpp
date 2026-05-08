@@ -38,7 +38,7 @@ const uint16_t udpVideoLocalPort = 4210;
 const uint16_t udpTelemetryLocalPort = 4211;
 const size_t udpVideoPayloadSize = 1000;
 const unsigned long udpVideoMaxStreamTimeMs = 10UL * 60UL * 1000UL;
-const unsigned long udpClientTimeoutMs = 3000UL;
+const unsigned long udpClientTimeoutMs = 15000UL;
 const unsigned long udpTelemetryIntervalMs = 200UL;
 
 extern Preferences preferences;
