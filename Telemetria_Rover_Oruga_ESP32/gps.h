@@ -8,6 +8,16 @@
 // Estructura pública de datos
 // ============================
 struct GPSData {
+    int utcHour = 0;
+    int utcMinute = 0;
+    int utcSecond = 0;
+
+    int utcDay = 0;
+    int utcMonth = 0;
+    int utcYear = 0;
+
+    bool utcValid = false;
+  
     float lat = 0.0f;
     float lon = 0.0f;
     float speed = 0.0f;     // km/h

@@ -108,6 +108,9 @@ Básicamente, se está confiando en que nadie mire… lo que en la práctica sig
 <li><a href='/luces/on'>/luces/on</a> Encender flash LED</li>
 <li><a href='/luces/off'>/luces/off</a> Apagar flash LED</li>
 
+
+<li><a href='/control?avanzar=0&amp;retroceder=0&amp;izquierda=0&amp;derecha=0'>/control?avanzar=0&retroceder=0&izquierda=0&derecha=0</a> Control del rover por GET. Valores 0-255 para avanzar, retroceder, izquierda y derecha. Si todos son 0 se envia trama de parada; si no llegan ordenes en menos de 1 segundo tambien se detiene.</li>
+
 <li><a href='/capture'>/capture</a> Captura unica en formato JPEG</li>
 <li><a href='/stream'>/stream</a> Stream MJPEG alta calidad</li>
 <li><a href='/stream_low'>/stream_low</a> Stream MJPEG baja resolucion y altos FPS para tiempo real</li>

@@ -49,7 +49,8 @@ void loop() {
   // ========================================
   esp_task_wdt_reset(); // Indicar que el sistema está funcionando
   
-  server.handleClient(); 
+  server.handleClient();
+  processControlWatchdog();
   delay(1);
 }
 

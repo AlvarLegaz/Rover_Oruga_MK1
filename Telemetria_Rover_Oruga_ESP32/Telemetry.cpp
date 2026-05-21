@@ -6,6 +6,8 @@
 
 #define TELEMETRY_INTERVAL_MS 1000 
 
+#define GPS_BAUDRATE 9600 // G28U7FTTL
+
 static void formatUptime(unsigned long uptimeMs, char* out, size_t outSize) {
 
     unsigned long totalSeconds = uptimeMs / 1000UL;
@@ -23,6 +25,38 @@ static void formatUptime(unsigned long uptimeMs, char* out, size_t outSize) {
         minutes,
         seconds
     );
+}
+
+static void formatGPSUtc(const GPSData& gps, char* out, size_t outSize) {
+
+    if (!gps.utcValid) {
+        snprintf(out, outSize, "");
+        return;
+    }
+
+    snprintf(
+        out,
+        outSize,
+        "%04d-%02d-%02dT%02d:%02d:%02dZ",
+        gps.utcYear,
+        gps.utcMonth,
+        gps.utcDay,
+        gps.utcHour,
+        gps.utcMinute,
+        gps.utcSecond
+    );
+}
+
+static void formatGPSUtcJson(const GPSData& gps, char* out, size_t outSize) {
+
+    if (!gps.utcValid) {
+        snprintf(out, outSize, "null");
+        return;
+    }
+
+    char utcText[24];
+    formatGPSUtc(gps, utcText, sizeof(utcText));
+    snprintf(out, outSize, "\"%s\"", utcText);
 }
 
 static void telemetryTask(void* param) {
@@ -45,7 +79,7 @@ Telemetry::Telemetry()
 
 void Telemetry::begin() {
 
-    initGPS(13, 2, 38400);
+    initGPS(13, 2, GPS_BAUDRATE);
     initIMU(14,15);
 
     mutex = xSemaphoreCreateMutex();
@@ -84,9 +118,11 @@ void Telemetry::toJSON(char* buffer, size_t size)
     IMUData imu = getIMUData();
 
     unsigned long uptimeMs = millis();
-    unsigned long uptimeS = uptimeMs / 1000UL;
     char uptimeText[24];
     formatUptime(uptimeMs, uptimeText, sizeof(uptimeText));
+
+    char gpsUtcJson[32];
+    formatGPSUtcJson(gps, gpsUtcJson, sizeof(gpsUtcJson));
 
     snprintf(buffer, size,
         "{"
@@ -102,7 +138,15 @@ void Telemetry::toJSON(char* buffer, size_t size)
         "\"speed\":%.1f,"
         "\"course\":%.1f,"
         "\"dir\":\"%s\","
-        "\"sats\":%d"
+        "\"sats\":%d,"
+        "\"utcValid\":%s,"
+        "\"utc\":%s,"
+        "\"utcHour\":%d,"
+        "\"utcMinute\":%d,"
+        "\"utcSecond\":%d,"
+        "\"utcDay\":%d,"
+        "\"utcMonth\":%d,"
+        "\"utcYear\":%d"
         "},"
 
         "\"imu\":{"
@@ -126,6 +170,14 @@ void Telemetry::toJSON(char* buffer, size_t size)
         gps.course,
         courseToText(gps.course),
         gps.sats,
+        gps.utcValid ? "true" : "false",
+        gpsUtcJson,
+        gps.utcHour,
+        gps.utcMinute,
+        gps.utcSecond,
+        gps.utcDay,
+        gps.utcMonth,
+        gps.utcYear,
 
         imu.roll,
         imu.pitch,
@@ -140,7 +192,6 @@ void Telemetry::toJSONSystem(char* buffer, size_t size)
     IMUData imu = getIMUData();
 
     unsigned long uptimeMs = millis();
-    unsigned long uptimeS = uptimeMs / 1000UL;
     char uptimeText[24];
     formatUptime(uptimeMs, uptimeText, sizeof(uptimeText));
 
@@ -158,17 +209,14 @@ void Telemetry::toJSONSystem(char* buffer, size_t size)
 
 void Telemetry::toJSONGPS(char* buffer, size_t size)
 {
-    float outTemp;
-    float outBat;
     GPSData outGps;
 
     xSemaphoreTake(mutex, portMAX_DELAY);
-
-    outTemp = temp;
-    outBat  = bat;
-    outGps  = gps;
-
+    outGps = gps;
     xSemaphoreGive(mutex);
+
+    char gpsUtcJson[32];
+    formatGPSUtcJson(outGps, gpsUtcJson, sizeof(gpsUtcJson));
 
     if (outGps.fix) {
 
@@ -180,14 +228,30 @@ void Telemetry::toJSONGPS(char* buffer, size_t size)
             "\"speed\":%.1f,"
             "\"course\":%.1f,"
             "\"dir\":\"%s\","
-            "\"sats\":%d"
+            "\"sats\":%d,"
+            "\"utcValid\":%s,"
+            "\"utc\":%s,"
+            "\"utcHour\":%d,"
+            "\"utcMinute\":%d,"
+            "\"utcSecond\":%d,"
+            "\"utcDay\":%d,"
+            "\"utcMonth\":%d,"
+            "\"utcYear\":%d"
             "}",
             outGps.lat,
             outGps.lon,
             outGps.speed,
             outGps.course,
             courseToText(outGps.course),
-            outGps.sats
+            outGps.sats,
+            outGps.utcValid ? "true" : "false",
+            gpsUtcJson,
+            outGps.utcHour,
+            outGps.utcMinute,
+            outGps.utcSecond,
+            outGps.utcDay,
+            outGps.utcMonth,
+            outGps.utcYear
         );
 
     } else {
@@ -200,9 +264,25 @@ void Telemetry::toJSONGPS(char* buffer, size_t size)
             "\"speed\":0,"
             "\"course\":0,"
             "\"dir\":\"---\","
-            "\"sats\":%d"
+            "\"sats\":%d,"
+            "\"utcValid\":%s,"
+            "\"utc\":%s,"
+            "\"utcHour\":%d,"
+            "\"utcMinute\":%d,"
+            "\"utcSecond\":%d,"
+            "\"utcDay\":%d,"
+            "\"utcMonth\":%d,"
+            "\"utcYear\":%d"
             "}",
-            outGps.sats
+            outGps.sats,
+            outGps.utcValid ? "true" : "false",
+            gpsUtcJson,
+            outGps.utcHour,
+            outGps.utcMinute,
+            outGps.utcSecond,
+            outGps.utcDay,
+            outGps.utcMonth,
+            outGps.utcYear
         );
     }
 }

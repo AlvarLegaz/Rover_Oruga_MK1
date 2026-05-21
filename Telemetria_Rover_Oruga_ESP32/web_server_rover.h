@@ -22,6 +22,9 @@ void handleIMU();
 void handleLightsOn();
 void handleLightsOff();
 
+void handleControl();
+void processControlWatchdog();
+
 void handleCapture();
 void handleStream();
 void handleStreamLow();

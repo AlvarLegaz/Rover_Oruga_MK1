@@ -41,6 +41,19 @@ const unsigned long udpVideoMaxStreamTimeMs = 10UL * 60UL * 1000UL;
 const unsigned long udpClientTimeoutMs = 15000UL;
 const unsigned long udpTelemetryIntervalMs = 200UL;
 
+// Control remoto recibido desde el visor por /control.
+// El visor envía valores 0..255 para cada dirección. Si todos son 0,
+// o si no llega ningún paquete durante CONTROL_TIMEOUT_MS, se envía STOP.
+const unsigned long CONTROL_TIMEOUT_MS = 1000UL;
+
+volatile unsigned long lastControlPacketMs = 0;
+volatile bool controlTimeoutStopSent = false;
+
+uint8_t lastCtrlAvanzar = 0;
+uint8_t lastCtrlRetroceder = 0;
+uint8_t lastCtrlIzquierda = 0;
+uint8_t lastCtrlDerecha = 0;
+
 extern Preferences preferences;
 
 WebServer server(web_port);
@@ -95,6 +108,11 @@ void handleUdpStop();
 void handleUdpStatus();
 void handleUdpPing();
 
+static uint8_t readControlValue(const char* name);
+static void sendControlFrame(uint8_t avanzar, uint8_t retroceder, uint8_t izquierda, uint8_t derecha);
+static void sendStopFrame(const char* reason);
+static void writeControlSerialFrame(const char* frame);
+
 // ==================================================
 // Arranque servidor web
 // ==================================================
@@ -117,6 +135,8 @@ void setupWebServer() {
 
     server.on("/luces/on", HTTP_GET, handleLightsOn);
     server.on("/luces/off", HTTP_GET, handleLightsOff);
+
+    server.on("/control", HTTP_GET, handleControl);
 
     server.on("/capture", HTTP_GET, handleCapture);
     server.on("/stream", HTTP_GET, handleStream);
@@ -187,6 +207,140 @@ void handleLightsOff() {
     pinMode(4, OUTPUT);
     digitalWrite(4, LOW);
     server.send(200, "text/plain", "Luces OFF");
+}
+
+// ==================================================
+// CONTROL ROVER DESDE VISOR
+// ==================================================
+
+static uint8_t readControlValue(const char* name) {
+
+    if (!server.hasArg(name)) {
+        return 0;
+    }
+
+    long value = server.arg(name).toInt();
+
+    if (value < 0) {
+        value = 0;
+    }
+
+    if (value > 255) {
+        value = 255;
+    }
+
+    return (uint8_t)value;
+}
+
+static void writeControlSerialFrame(const char* frame) {
+
+    // Debug por USB/monitor serie.
+    Serial.print("[CONTROL] ");
+    Serial.println(frame);
+
+    // UART compartida con GPS: normalmente RX recibe GPS y TX se puede usar
+    // para mandar órdenes al Arduino. En este proyecto el GPS se inicializa
+    // con initGPS(13, 2, 9600), por lo que Serial1 TX suele salir por GPIO2.
+    Serial1.println(frame);
+}
+
+static void sendControlFrame(uint8_t avanzar, uint8_t retroceder, uint8_t izquierda, uint8_t derecha) {
+
+    char frame[64];
+
+    snprintf(
+        frame,
+        sizeof(frame),
+        "<ROVER_CTRL,%u,%u,%u,%u>",
+        avanzar,
+        retroceder,
+        izquierda,
+        derecha
+    );
+
+    writeControlSerialFrame(frame);
+}
+
+static void sendStopFrame(const char* reason) {
+
+    char frame[80];
+
+    snprintf(
+        frame,
+        sizeof(frame),
+        "<ROVER_STOP,%s,0,0,0,0>",
+        reason
+    );
+
+    writeControlSerialFrame(frame);
+}
+
+void handleControl() {
+
+    uint8_t avanzar = readControlValue("avanzar");
+    uint8_t retroceder = readControlValue("retroceder");
+    uint8_t izquierda = readControlValue("izquierda");
+    uint8_t derecha = readControlValue("derecha");
+
+    lastCtrlAvanzar = avanzar;
+    lastCtrlRetroceder = retroceder;
+    lastCtrlIzquierda = izquierda;
+    lastCtrlDerecha = derecha;
+
+    lastControlPacketMs = millis();
+    controlTimeoutStopSent = false;
+
+    bool allZero = (
+        avanzar == 0
+        && retroceder == 0
+        && izquierda == 0
+        && derecha == 0
+    );
+
+    if (allZero) {
+        sendStopFrame("ZERO");
+        controlTimeoutStopSent = true;
+    } else {
+        sendControlFrame(avanzar, retroceder, izquierda, derecha);
+    }
+
+    char json[180];
+    snprintf(
+        json,
+        sizeof(json),
+        "{\"ok\":true,\"stop\":%s,\"avanzar\":%u,\"retroceder\":%u,\"izquierda\":%u,\"derecha\":%u}",
+        allZero ? "true" : "false",
+        avanzar,
+        retroceder,
+        izquierda,
+        derecha
+    );
+
+    server.sendHeader("Connection", "close");
+    server.sendHeader("Cache-Control", "no-store");
+    server.send(200, "application/json", json);
+}
+
+void processControlWatchdog() {
+
+    unsigned long lastMs = lastControlPacketMs;
+
+    // Hasta recibir el primer /control no hacemos nada.
+    if (lastMs == 0) {
+        return;
+    }
+
+    unsigned long now = millis();
+
+    if (now - lastMs > CONTROL_TIMEOUT_MS && !controlTimeoutStopSent) {
+        lastCtrlAvanzar = 0;
+        lastCtrlRetroceder = 0;
+        lastCtrlIzquierda = 0;
+        lastCtrlDerecha = 0;
+
+        sendStopFrame("TIMEOUT");
+        controlTimeoutStopSent = true;
+    }
 }
 
 // ==================================================
