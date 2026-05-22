@@ -82,7 +82,7 @@ FPS_AVG_WINDOW_SEC = 2.0
 
 STREAM_ENDPOINT = "/stream"
 TELEMETRY_ENDPOINT = "/telemetry"
-DEFAULT_HTTP_PORT = "8000"
+DEFAULT_HTTP_PORT = "80"
 
 UDP_START_ENDPOINT = "/udp/start"
 UDP_STOP_ENDPOINT = "/udp/stop"
@@ -749,25 +749,6 @@ class Visor:
             font=("Courier", 10, "bold")
         )
         self.wifi_status.pack(pady=(0, 6))
-
-        Label(
-            right,
-            text="BRUJULA",
-            bg=PANEL,
-            fg=ACCENT,
-            font=("Arial", 10, "bold")
-        ).pack(pady=(6, 2))
-
-        self.compass = tk.Canvas(
-            right,
-            width=180,
-            height=180,
-            bg=PANEL,
-            highlightthickness=0
-        )
-        self.compass.pack()
-
-        self.draw_compass(0)
 
         Label(
             right,
@@ -2086,10 +2067,6 @@ class Visor:
                 self.last_lon
             )
 
-        self.draw_compass(
-            self.last_course
-        )
-
         pitch = float(imu.get("pitch", 0))
         roll = float(imu.get("roll", 0))
 
@@ -2292,50 +2269,6 @@ class Visor:
             fill="#00ff00",
             font=("Consolas", 10),
             text=f"HDG {self.last_course:.1f}"
-        )
-
-    # ==================================================
-    # BRUJULA
-    # ==================================================
-
-    def draw_compass(self, deg):
-
-        c = self.compass
-        c.delete("all")
-
-        cx = 90
-        cy = 90
-        r = 70
-
-        c.create_oval(
-            cx-r, cy-r,
-            cx+r, cy+r,
-            outline=ACCENT,
-            width=2
-        )
-
-        c.create_text(cx, 10, text="N", fill=TEXT)
-        c.create_text(cx, 170, text="S", fill=TEXT)
-        c.create_text(10, cy, text="W", fill=TEXT)
-        c.create_text(170, cy, text="E", fill=TEXT)
-
-        rad = math.radians(deg - 90)
-
-        x = cx + math.cos(rad) * 55
-        y = cy + math.sin(rad) * 55
-
-        c.create_line(
-            cx, cy, x, y,
-            fill="red",
-            width=4,
-            arrow=tk.LAST
-        )
-
-        c.create_text(
-            cx,
-            cy+95,
-            text=f"{deg:.1f}°",
-            fill=TEXT
         )
 
     # ==================================================

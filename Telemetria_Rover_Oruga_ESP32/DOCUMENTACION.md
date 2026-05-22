@@ -1,256 +1,95 @@
-# Arquitectura e hilos del proyecto ESP32 Rover MK1
+# Arquitectura e hilos del proyecto ESP32 Rover
 
 ## Resumen general
 
-Proyecto de rover basado en **ESP32-CAM AI Thinker** con cámara OV2640, GPS, sensores inerciales y servidor web embebido.
+El proyecto implementa un rover basado en ESP32 con cámara, GPS y servidor web integrado. 
 
-El sistema está diseñado para operar de forma autónoma en red local, ofreciendo vídeo en tiempo real, telemetría JSON y configuración remota vía navegador.
+Funciones principales:
+* Captura de imagen y streaming MJPEG.
+* Lectura de posición GPS en tiempo real.
+* Entrega de telemetría por HTTP en formato JSON.
+* Interfaz web local para monitorización.
+* Configuración WiFi persistente (NVS).
 
-## Funciones principales
-
-- Captura de imagen JPEG.
-- Streaming MJPEG en tiempo real.
-- Posicionamiento GPS.
-- Sensores inerciales MPU9250:
-  - acelerómetro
-  - giroscopio
-  - magnetómetro
-- Sensor ambiental BMP280:
-  - temperatura
-  - presión
-  - altitud estimada
-- API REST JSON modular.
-- Panel web integrado.
-- Configuración WiFi persistente en memoria Flash.
-- Arquitectura multitarea con FreeRTOS.
+El sistema está diseñado bajo una arquitectura de **separación de responsabilidades** para maximizar la estabilidad en entornos RTOS.
 
 ---
 
-# Hardware principal
+## Archivos principales y relaciones
 
-## Controladora
+### `Telemetria_Rover_Oruga_ESP32.ino`
+Punto de entrada y orquestador del sistema.
+* **Responsable de:** Inicialización de hardware, configuración de Watchdog (WDT), gestión de conectividad (Modo AP/Station) y arranque de los servicios de telemetría y web.
 
-- ESP32-CAM AI Thinker
+### `web_server_rover.cpp / .h`
+Núcleo de la interfaz de usuario y API.
+* **Responsable de:** Registro de rutas HTTP, despacho de páginas HTML (`info_page.h`, `config_page.h`) y gestión de tareas dinámicas de video.
 
-## Sensores
+### `gps.cpp / gps.h`
+Driver de posicionamiento.
+* **Responsable de:** Manejo de la UART2, parseo de sentencias NMEA y mantenimiento de un snapshot seguro de la posición GPS protegido por Mutex.
 
-- Cámara OV2640
-- GPS UART
-- MPU9250 (IMU 9 ejes)
-- BMP280 (barómetro)
-
-## Pines utilizados
-
-### GPS
-
-| Función | GPIO |
-|--------|------|
-| RX/TX | GPIO13 / GPIO12 |
-
-### I2C Sensores
-
-| Función | GPIO |
-|--------|------|
-| SDA | GPIO15 |
-| SCL | GPIO14 |
+### `Telemetry.cpp / .h`
+Capa de abstracción de datos.
+* **Responsable de:** Recolectar datos de múltiples fuentes (GPS, sensores analógicos, estado del sistema) y empaquetarlos en formato JSON para el frontend.
 
 ---
 
-# Archivos principales
+## Gestión de Hilos (FreeRTOS Tasks)
 
-## `Telemetria_Rover_Oruga_ESP32.ino`
 
-Archivo principal del proyecto.
+### 1. loopTask (Core 1)
+Tarea estándar de Arduino.
+* **Función:** Gestiona el `server.handleClient()` y el reseteo del Watchdog principal.
+* **Prioridad:** 1 (Baja).
 
-Responsable de:
+### 2. gpsTask (Core 1)
+Hilo de alta frecuencia para el sensor de posición.
+* **Función:** Lectura del buffer serie para evitar pérdida de datos UART.
+* **Estado:** Permanente.
+* **Prioridad:** Superior a la telemetría.
 
-- arranque del sistema
-- WiFi AP / Station
-- inicialización hardware
-- watchdog
-- arranque servicios
+### 3. telemetryTask (Core 1)
+Hilo de actualización de estado.
+* **Función:** Actualiza los valores de sensores cada 500ms.
+* **Estado:** Permanente.
 
----
-
-## `web_server_rover.cpp / .h`
-
-Servidor HTTP principal.
-
-Responsable de:
-
-- rutas web
-- API JSON
-- páginas HTML
-- tareas dinámicas de streaming
+### 4. streamTask / streamLowTask (Core 0)
+Tareas dinámicas para el manejo de video.
+* **Función:** Captura y envío de frames MJPEG. Se ejecutan en el **Core 0** para evitar que el procesamiento de imagen interfiera con la navegación o el GPS.
+* **Estado:** Temporal (se destruyen al cerrar la conexión).
 
 ---
 
-## `camera_driver_OV2640.cpp / .h`
+## Seguridad y Sincronización
 
-Driver de cámara.
+Para garantizar que el sistema sea **estable** y no sufra "crashes" por acceso simultáneo a memoria, se implementan los siguientes mecanismos:
 
-Responsable de:
+### Mutex (Semáforos)
+* **`gpsMutex`**: Protege la estructura `GPSData` durante la escritura (desde `gpsTask`) y lectura (desde `Telemetry`).
+* **`camMutex`**: Controla el acceso exclusivo al sensor de la cámara (OV2640). Evita conflictos si se solicita una captura mientras el stream está activo.
+* **`mutex` (en Telemetry)**: Protege la generación del string JSON.
 
-- inicialización OV2640
-- captura frames
-- cambio de modos:
-  - LOW LATENCY
-  - NORMAL
-- control resolución y calidad JPEG
-
----
-
-## `gps.cpp / gps.h`
-
-Driver GPS.
-
-Responsable de:
-
-- lectura UART2
-- parseo NMEA
-- mantenimiento estructura `GPSData`
+### Watchdog (WDT)
+* Se utiliza un **Task Watchdog** configurado a 30 segundos para reiniciar el sistema automáticamente si el bucle principal se bloquea (ej. fallo crítico de red).
 
 ---
 
-## `imu.cpp / imu.h`
-
-Driver sensores inerciales.
-
-Responsable de:
-
-- inicialización I2C
-- lectura MPU9250
-- lectura BMP280
-- cálculo:
-
-  - roll
-  - pitch
-  - yaw
-  - heading
-  - altitud
+## Persistencia y Configuración
+* **Almacenamiento:** Uso de la librería `Preferences` en la partición NVS de la Flash.
+* **Lógica de Conexión:** 1. Si el **Pin 12** está en `LOW` al arrancar: Modo AP forzado.
+    2. Si no hay credenciales guardadas: Modo AP automático.
+    3. Si hay credenciales: Intenta conectar a la red local; si falla en 10 segundos, activa Modo AP de rescate.
 
 ---
 
-## `Telemetry.cpp / .h`
+## Endpoints de la API
 
-Capa unificada de telemetría.
-
-Responsable de:
-
-- recolectar sensores
-- sincronizar acceso a datos
-- generar JSON modular
-
----
-
-# Arquitectura multitarea FreeRTOS
-
----
-
-## 1. loopTask (Core 1)
-
-Tarea principal Arduino.
-
-Responsable de:
-
-- `server.handleClient()`
-- mantenimiento general
-- watchdog principal
-
-Prioridad: baja
-
----
-
-## 2. gpsTask (Core 1)
-
-Lectura continua GPS.
-
-Responsable de:
-
-- vaciado UART
-- parseo continuo
-
-Prioridad: media
-
----
-
-## 3. telemetryTask (Core 1)
-
-Actualización periódica sensores.
-
-Responsable de:
-
-- temperatura
-- batería
-- GPS snapshot
-- IMU update
-- BMP280 update
-
-Frecuencia típica:
-
-- 500 ms
-
----
-
-## 4. streamTask (Core 0)
-
-Streaming MJPEG alta calidad.
-
-Responsable de:
-
-- captura cámara
-- envío frames HTTP
-
-Temporal: sí
-
----
-
-## 5. streamLowTask (Core 0)
-
-Streaming MJPEG baja latencia.
-
-Responsable de:
-
-- vídeo tiempo real
-- máximos FPS posibles
-
-Temporal: sí
-
----
-
-# Gestión de concurrencia
-
-## Mutex usados
-
-### `gpsMutex`
-
-Protege estructura GPS.
-
-### `camMutex`
-
-Acceso exclusivo a cámara.
-
-Evita conflictos entre:
-
-- `/capture`
-- `/stream`
-- `/stream_low`
-
-### `mutex` interno Telemetry
-
-Protege snapshot de sensores.
-
----
-
-# Watchdog (WDT)
-
-Sistema protegido con watchdog para detectar bloqueos críticos.
-
-## Nota importante
-
-Las tareas de streaming no usan ya `esp_task_wdt_reset()` innecesario.
-
-Esto evita errores:
-
-```text
-task_wdt: task not found
+| Ruta | Función | Retorno |
+| :--- | :--- | :--- |
+| `/` | Interfaz de control principal | HTML/Dashboard |
+| `/telemetry` | Datos de sensores en tiempo real | JSON |
+| `/stream` | Video en alta calidad (10 FPS) | MJPEG Stream |
+| `/stream_low` | Video en baja calidad (20 FPS) | MJPEG Stream |
+| `/capture` | Foto instantánea | JPEG |
+| `/config` | Panel de configuración WiFi | HTML |
